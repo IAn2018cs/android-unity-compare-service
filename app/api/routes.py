@@ -66,7 +66,7 @@ async def discover(request: Request, settings: Settings = Depends(get_settings))
         "base_url": base_url,
         "auth": {
             "type": "api_key",
-            "description": "数据 API 使用 Authorization: Bearer <key>，兼容 X-API-Key。AUTH_ENABLED=false 时放行。",
+            "description": "数据 API 使用 Authorization: Bearer <key>，兼容 X-API-Key。Key 可在 /admin 创建/吊销；AUTH_ENABLED=false 时放行。",
             "scheme": {"in": "header", "name": "Authorization", "format": "Bearer <key>", "alt_header": "X-API-Key"},
             "public_endpoints": ["/health", "/discover"],
             "api_key_endpoints": [
@@ -75,7 +75,7 @@ async def discover(request: Request, settings: Settings = Depends(get_settings))
                 "/api/v1/batch-comparisons",
                 "/api/v1/tasks/{taskId}",
             ],
-            "session_endpoints": ["/"],
+            "session_endpoints": ["/admin"],
         },
         "concepts": {
             "package_name": "Android 包名，是所有任务的应用标识。",
@@ -106,6 +106,11 @@ async def discover(request: Request, settings: Settings = Depends(get_settings))
                 "COMPARE_CONCURRENCY": {"default": str(settings.compare_concurrency), "description": "同时执行 pair 对比的数量"},
                 "IL2CPP_DUMPER_PATH": {"default": str(settings.il2cpp_dumper_path or ""), "description": "Il2CppDumper 可执行文件路径"},
                 "DLL_ANALYZER_PATH": {"default": str(settings.dll_analyzer_path or ""), "description": "DllAnalyzer 可执行文件路径"},
+                "AUTH_ENABLED": {"default": str(settings.auth_enabled).lower(), "description": "开启 API Key 和管理后台登录鉴权"},
+                "AUTH_API_KEY_ENABLED": {"default": str(settings.auth_api_key_enabled).lower(), "description": "开启数据 API Key 校验"},
+                "FEISHU_APP_ID": {"default": "", "description": "飞书 OAuth 应用 App ID"},
+                "FEISHU_APP_SECRET": {"default": "", "description": "飞书 OAuth 应用 App Secret"},
+                "SESSION_TTL_HOURS": {"default": str(settings.session_ttl_hours), "description": "管理后台 session 有效期"},
                 "REPORT_STORAGE_BACKEND": {"default": settings.report_storage_backend, "description": "报告存储后端：local/gcs/s3"},
                 "REPORT_SIGNED_URL_TTL_SECONDS": {"default": str(settings.report_signed_url_ttl_seconds), "description": "报告 signed URL 有效期"},
                 "REPORT_STORAGE_PREFIX": {"default": settings.report_storage_prefix, "description": "报告对象 key 前缀"},

@@ -112,7 +112,10 @@ android-unity-compare-service/
     db.py                # SQLite schema 和任务状态存取
     models.py            # 请求模型和状态枚举
     api/routes.py        # /discover、/health 外的任务 API
-    auth/deps.py         # 静态 API_KEYS 门禁
+    auth/deps.py         # API Key 和管理 session 门禁
+    auth/service.py      # auth.sqlite、API Key hash、session、OAuth state
+    auth/routes.py       # 飞书 OAuth 登录/回调/退出
+    admin/routes.py      # 管理后台和 API Key 创建/吊销
     aps/client.py        # APS 下载 client，已接入 worker
     worker/loop.py       # worker 主循环
     worker/executor.py   # 下载包、判断 Unity 可 dump、汇总 pair 状态
@@ -145,7 +148,7 @@ android-unity-compare-service/
 ```env
 AUTH_ENABLED=true
 AUTH_API_KEY_ENABLED=true
-API_KEYS=...  # 当前最小实现使用逗号分隔静态 key；管理后台阶段替换为 auth.sqlite 哈希存储
+API_KEYS=...  # 兼容静态 key；新 key 默认由 /admin 写入 auth.sqlite，服务端只存 hash
 FEISHU_APP_ID=...
 FEISHU_APP_SECRET=...
 FEISHU_AUTH_BASE=https://accounts.feishu.cn
@@ -155,7 +158,7 @@ SESSION_TTL_HOURS=24
 
 实现方式复用 APS 的形态：独立 `auth.sqlite`，API Key 只存 hash，服务端 session，OAuth state 落库。
 
-当前最小实现暂时没有管理后台和 `auth.sqlite`，只支持 `AUTH_ENABLED=true` + `API_KEYS=key1,key2` 的静态门禁；后续管理后台阶段替换为 APS 同款哈希存储。
+当前实现已接入飞书 OAuth 单管理员后台 `/admin`，支持创建、查看和吊销 API Key。静态 `API_KEYS=key1,key2` 仍保留为迁移兼容入口。
 
 ## 环境变量
 
@@ -551,13 +554,13 @@ services:
 ## 实施阶段
 
 1. [done] 搭 FastAPI、配置、SQLite 任务表、Docker Compose。
-2. [partial] 实现公开 `/discover` 和首页 `/`；OAuth 保护的首页随管理后台阶段接入。
+2. [done] 实现公开 `/discover`、首页 `/` 和 OAuth 保护的 `/admin` 管理后台。
 3. [done] 实现 APS client：API Key、`202` 轮询、`302` 跟随下载，并接入 worker。
 4. [done] 迁移 Unity dump、对比、报告生成代码和二进制：已迁移 Il2CppDumper、DllAnalyzer 单文件二进制、DummyDll compare、兼容内容报告和 HTML AI 分析调用。
 5. [done] 实现 Unity 可导校验和单 pair 对比：worker 已下载包、判断 libil2cpp/global-metadata，执行真实 dump，并对 DummyDll 生成 JSON/HTML 报告。
 6. [partial] 实现批量相邻对比：版本级任务建模、排序、下载复用和 pair 状态汇总已落地；当前执行器按 pair 顺序处理，后续再按 `COMPARE_CONCURRENCY` 做并发调度。
 7. [done] 实现报告 local/GCS/S3 存储和 signed URL。
-8. 实现 API Key + 飞书 OAuth 管理后台，形态参考 APS。
+8. [done] 实现 API Key + 飞书 OAuth 管理后台，形态参考 APS。
 9. [partial] 实现成功、失败、worker 启动和 TTL 四类清理：worker loop 和 TTL 清理已落地。
 10. [partial] 增加 fake APS 或 mock APS 的 smoke test：当前覆盖 API 提交/查询和鉴权门禁。
 
@@ -568,6 +571,7 @@ services:
 - `app/main.py` 提供 FastAPI 服务、`/health`、`/discover` 和 `/`。
 - `app/db.py` 使用 SQLite 保存 task/version/pair/artifact，支持提交和查询任务。
 - `app/api/routes.py` 支持 `/api/v1/unity-checks`、`/api/v1/comparisons`、`/api/v1/batch-comparisons`、`/api/v1/tasks/{taskId}`。
+- `app/auth/` 和 `app/admin/` 支持飞书 OAuth 单管理员登录、服务端 session、auth.sqlite API Key hash 存储，以及 API Key 创建/吊销。
 - `app/worker/loop.py` 可领取 queued task，执行 APS 下载、Unity 包判断、pair 成败汇总和清理。
 - `app/aps/client.py` 已具备下载接口、APS `202` 轮询和重定向跟随能力，并已接入执行器。
 - `app/storage.py` 支持报告 local/GCS/S3 上传；查询任务时对 GCS/S3 artifact 实时生成 signed URL。
@@ -580,7 +584,7 @@ services:
 
 刻意暂缓：
 
-- 飞书 OAuth 管理后台和 API Key 管理页面；当前先用 `AUTH_ENABLED=true` + `API_KEYS=key1,key2` 做数据 API 门禁。
+- cancel/retry 接口；当前 retry 通过重新提交任务解决。
 
 当前降级策略：
 

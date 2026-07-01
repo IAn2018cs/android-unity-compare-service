@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     auth_api_key_enabled: bool = True
     api_keys: str | None = None
+    feishu_app_id: str | None = None
+    feishu_app_secret: str | None = None
+    feishu_auth_base: str = "https://accounts.feishu.cn"
+    feishu_api_base: str = "https://open.feishu.cn"
+    session_ttl_hours: float = 24.0
+    http_timeout_seconds: float = 30.0
 
     aps_base_url: str = "http://localhost:11010"
     aps_api_key: str | None = None
@@ -50,6 +56,8 @@ class Settings(BaseSettings):
     @field_validator(
         "api_keys",
         "aps_api_key",
+        "feishu_app_id",
+        "feishu_app_secret",
         "il2cpp_dumper_path",
         "dll_analyzer_path",
         "report_gcs_bucket",
@@ -68,6 +76,10 @@ class Settings(BaseSettings):
     @property
     def task_db_path(self) -> Path:
         return self.db_path or self.data_dir / "tasks.sqlite"
+
+    @property
+    def auth_db_path(self) -> Path:
+        return self.data_dir / "auth.sqlite"
 
     @property
     def accepted_api_keys(self) -> set[str]:

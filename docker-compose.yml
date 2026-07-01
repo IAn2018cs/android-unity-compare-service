@@ -11,7 +11,13 @@ services:
       WORK_DIR: /app/work
       DB_PATH: /app/data/tasks.sqlite
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      AUTH_API_KEY_ENABLED: ${AUTH_API_KEY_ENABLED:-true}
       API_KEYS: ${API_KEYS:-}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_AUTH_BASE: ${FEISHU_AUTH_BASE:-https://accounts.feishu.cn}
+      FEISHU_API_BASE: ${FEISHU_API_BASE:-https://open.feishu.cn}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
       APS_BASE_URL: ${APS_BASE_URL:-http://host.docker.internal:11010}
       APS_API_KEY: ${APS_API_KEY:-}
       TASK_CONCURRENCY: ${TASK_CONCURRENCY:-2}

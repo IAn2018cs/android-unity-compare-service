@@ -18,7 +18,10 @@ android-unity-compare-service/
     db.py                # SQLite schema、任务创建、状态更新、任务查询
     models.py            # 任务、版本、pair 状态和请求模型
     api/routes.py        # 提交/查询任务和公开 discover/home
-    auth/deps.py         # 当前最小 API Key 依赖
+    auth/deps.py         # API Key 和管理 session 依赖
+    auth/service.py      # auth.sqlite、API Key hash、session、OAuth state
+    auth/routes.py       # 飞书 OAuth 登录/回调/退出
+    admin/routes.py      # 管理后台和 API Key 创建/吊销
     aps/client.py        # APS 下载 client，支持 202 轮询和重定向跟随
     storage.py           # 报告 local/GCS/S3 上传和 signed URL
     worker/loop.py       # worker 主循环
@@ -52,11 +55,10 @@ android-unity-compare-service/
 - 配置 `OPENAI_API_KEY` 后，HTML 报告会调用 OpenAI-compatible API 生成 AI 智能分析；JSON 报告内容不写入 AI 结果
 - `REPORT_STORAGE_BACKEND=local|gcs|s3` 支持报告上传；GCS/S3 查询任务时返回短期 signed URL
 - Docker 镜像安装 .NET 8 和 .NET 9 runtime（非 SDK）以及 `libicu76`；Compose 固定 `linux/amd64`
-- `AUTH_ENABLED=true` 时支持静态 `API_KEYS` 门禁
+- `AUTH_ENABLED=true` 时支持飞书 OAuth 单管理员后台，API Key 创建/吊销；静态 `API_KEYS` 仍保留兼容
 
 ## 暂缓能力
 
-- 飞书 OAuth 管理后台、API Key 创建/吊销
 - cancel/retry 接口
 
 ## 本地运行

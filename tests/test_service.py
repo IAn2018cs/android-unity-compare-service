@@ -7,6 +7,7 @@ from app.config import get_settings
 from app.db import TaskStore
 from app.main import app
 from app.models import PairCompareRequest
+from app.auth.service import AuthService
 from app.unity.compare import compare_dummy_dirs
 from app.unity.dumper import extract_unity_inputs, looks_like_unity_package
 from app.worker.executor import TaskExecutor
@@ -79,6 +80,57 @@ def test_api_key_gate(tmp_path):
         assert c.get("/api/v1/tasks/missing", headers={"X-API-Key": "secret"}).status_code == 404
     finally:
         get_settings.cache_clear()
+
+
+def test_admin_can_create_and_revoke_api_keys(tmp_path):
+    c = client(tmp_path)
+    settings = get_settings()
+    settings.auth_enabled = True
+    svc = AuthService(settings.auth_db_path, session_ttl_hours=settings.session_ttl_hours)
+    svc.register_or_check_admin("ou_admin", "Admin", "admin@example.com")
+    session = svc.create_session("ou_admin")
+    cookie = {"Cookie": f"auc_session={session.id}"}
+
+    assert c.get("/admin", follow_redirects=False).status_code == 302
+    assert c.get("/admin", headers=cookie).status_code == 200
+    created = c.post("/admin/api-keys", json={"name": "ci"}, headers=cookie)
+    assert created.status_code == 201
+    raw_key = created.json()["key"]
+    assert raw_key.startswith("auc_")
+    assert c.get("/api/v1/tasks/missing", headers={"X-API-Key": raw_key}).status_code == 404
+
+    key_id = created.json()["id"]
+    assert c.post(f"/admin/api-keys/{key_id}/revoke", headers=cookie).status_code == 200
+    assert c.get("/api/v1/tasks/missing", headers={"X-API-Key": raw_key}).status_code == 401
+
+
+def test_feishu_oauth_callback_creates_admin_session(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    settings = get_settings()
+    settings.auth_enabled = True
+    svc = AuthService(settings.auth_db_path, session_ttl_hours=settings.session_ttl_hours)
+    state = svc.create_oauth_state("/admin")
+
+    async def fake_exchange_code(settings, code, redirect_uri):
+        return "token"
+
+    async def fake_fetch_user_info(settings, access_token):
+        class User:
+            open_id = "ou_admin"
+            name = "Admin"
+            email = "admin@example.com"
+
+        return User()
+
+    monkeypatch.setattr("app.auth.feishu.exchange_code", fake_exchange_code)
+    monkeypatch.setattr("app.auth.feishu.fetch_user_info", fake_fetch_user_info)
+
+    response = c.get(f"/auth/callback?code=ok&state={state}", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/admin"
+    assert "auc_session=" in response.headers["set-cookie"]
+    assert svc.get_admin().open_id == "ou_admin"
 
 
 def test_worker_executor_marks_task_done(tmp_path, monkeypatch):
