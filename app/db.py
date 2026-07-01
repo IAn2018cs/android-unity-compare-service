@@ -155,6 +155,14 @@ class TaskStore:
             conn.execute("UPDATE versions SET status = ?, error = ? WHERE id = ?", (status, error, version_id))
             conn.execute("UPDATE tasks SET updated_at = ? WHERE id = (SELECT task_id FROM versions WHERE id = ?)", (utc_now(), version_id))
 
+    def set_version_paths(self, version_id: str, package_path: Path | None = None, dump_path: Path | None = None) -> None:
+        with self.connect() as conn:
+            if package_path is not None:
+                conn.execute("UPDATE versions SET package_path = ? WHERE id = ?", (str(package_path), version_id))
+            if dump_path is not None:
+                conn.execute("UPDATE versions SET dump_path = ? WHERE id = ?", (str(dump_path), version_id))
+            conn.execute("UPDATE tasks SET updated_at = ? WHERE id = (SELECT task_id FROM versions WHERE id = ?)", (utc_now(), version_id))
+
     def mark_pair(self, pair_id: str, status: PairStatus, error: str | None = None) -> None:
         with self.connect() as conn:
             conn.execute("UPDATE pairs SET status = ?, error = ? WHERE id = ?", (status, error, pair_id))
@@ -273,6 +281,8 @@ def task_response(
                 "versionCode": row["version_code"],
                 "versionName": row["version_name"],
                 "status": row["status"],
+                "packagePath": row["package_path"],
+                "dumpPath": row["dump_path"],
                 "error": row["error"],
             }
             for row in versions
@@ -280,6 +290,8 @@ def task_response(
         "comparisons": [
             {
                 "pairId": row["id"],
+                "oldVersionId": row["old_version_id"],
+                "newVersionId": row["new_version_id"],
                 "oldVersion": row["old_name"] or row["old_code"] or "unknown",
                 "newVersion": row["new_name"] or row["new_code"] or "unknown",
                 "status": row["status"],

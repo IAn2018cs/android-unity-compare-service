@@ -1,6 +1,7 @@
 services:
   compare-api:
     build: .
+    platform: linux/amd64
     ports:
       - "18080:8080"
     environment: &compare_environment
@@ -17,6 +18,8 @@ services:
       DOWNLOAD_CONCURRENCY: ${DOWNLOAD_CONCURRENCY:-4}
       DUMP_CONCURRENCY: ${DUMP_CONCURRENCY:-2}
       COMPARE_CONCURRENCY: ${COMPARE_CONCURRENCY:-2}
+      IL2CPP_DUMPER_PATH: ${IL2CPP_DUMPER_PATH:-/app/lib/product/Il2CppDumper/linux/Il2CppDumper}
+      IL2CPP_DUMPER_TIMEOUT_SECONDS: ${IL2CPP_DUMPER_TIMEOUT_SECONDS:-3600}
       KEEP_FAILED_WORK_DIR: ${KEEP_FAILED_WORK_DIR:-false}
       WORK_DIR_TTL_HOURS: ${WORK_DIR_TTL_HOURS:-24}
     volumes: &compare_volumes
@@ -30,6 +33,7 @@ services:
 
   compare-worker:
     build: .
+    platform: linux/amd64
     command: ["python", "-m", "app.worker.loop"]
     environment: *compare_environment
     volumes: *compare_volumes

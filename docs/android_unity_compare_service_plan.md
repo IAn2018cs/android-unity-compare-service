@@ -57,6 +57,7 @@ Compare VM
 - 独立 worker loop：后台执行下载、dump、对比、上传和清理。
 - Docker Compose：部署 `compare-api` 和 `compare-worker`。
 - 复用当前仓库的 Unity dump/compare 代码和 `lib/product` 二进制。
+- Docker 镜像安装 .NET 8 runtime（非 SDK）和 `libicu`，用于运行 `lib/product/Il2CppDumper`。当前 Linux Il2CppDumper 是 x86-64，Compose 固定 `platform: linux/amd64`。
 
 第一版不引入 Redis、Celery、Postgres、Kubernetes、动态多机器调度。等单台 compare VM 被打满后再升级。
 
@@ -112,13 +113,14 @@ android-unity-compare-service/
     models.py            # 请求模型和状态枚举
     api/routes.py        # /discover、/health 外的任务 API
     auth/deps.py         # 静态 API_KEYS 门禁
-    aps/client.py        # APS 下载 client，待接入 worker
+    aps/client.py        # APS 下载 client，已接入 worker
     worker/loop.py       # worker 主循环
-    worker/executor.py   # 占位执行器，验证任务状态流转
+    worker/executor.py   # 下载包、判断 Unity 可 dump、汇总 pair 状态
     worker/cleanup.py    # WORK_DIR TTL 清理
-    unity/dumper.py      # 轻量 Unity 包判断，待迁移真实 dump
+    unity/dumper.py      # Unity 包判断、Il2CppDumper 输入提取和真实 dump 入口
   tests/test_service.py
   PROJECT_MAP.md
+  lib/product/Il2CppDumper/
   docker-compose.yml
   Dockerfile
   pyproject.toml
@@ -167,6 +169,8 @@ TASK_CONCURRENCY=2
 DOWNLOAD_CONCURRENCY=4
 DUMP_CONCURRENCY=2
 COMPARE_CONCURRENCY=2
+IL2CPP_DUMPER_PATH=/app/lib/product/Il2CppDumper/linux/Il2CppDumper
+IL2CPP_DUMPER_TIMEOUT_SECONDS=3600
 
 DATA_DIR=/app/data
 WORK_DIR=/app/work
@@ -510,19 +514,23 @@ class ReportStorage:
 services:
   compare-api:
     build: .
+    platform: linux/amd64
     ports:
       - "18080:8080"
     environment:
       PORT: 8080
+      IL2CPP_DUMPER_PATH: /app/lib/product/Il2CppDumper/linux/Il2CppDumper
     volumes:
       - ./data:/app/data
       - ./work:/app/work
 
   compare-worker:
     build: .
+    platform: linux/amd64
     command: ["python", "-m", "app.worker.loop"]
     environment:
       PORT: 8080
+      IL2CPP_DUMPER_PATH: /app/lib/product/Il2CppDumper/linux/Il2CppDumper
     volumes:
       - ./data:/app/data
       - ./work:/app/work
@@ -534,10 +542,10 @@ services:
 
 1. [done] 搭 FastAPI、配置、SQLite 任务表、Docker Compose。
 2. [partial] 实现公开 `/discover` 和首页 `/`；OAuth 保护的首页随管理后台阶段接入。
-3. [partial] 实现 APS client：API Key、`202` 轮询、`302` 跟随下载；worker 尚未接入真实下载流程。
-4. 迁移 Unity dump、对比、报告生成代码和二进制。
-5. [partial] 实现 Unity 可导校验和单 pair 对比：API/任务模型已落地，执行器目前为占位成功流。
-6. [partial] 实现批量相邻对比：版本级任务建模和排序已落地，真实下载/dump/compare 并发后续接入。
+3. [done] 实现 APS client：API Key、`202` 轮询、`302` 跟随下载，并接入 worker。
+4. [partial] 迁移 Unity dump、对比、报告生成代码和二进制：已迁移 Il2CppDumper 输入提取、调用入口和 Il2CppDumper 二进制；DllAnalyzer、DummyDll compare、HTML/AI 报告待迁移。
+5. [partial] 实现 Unity 可导校验和单 pair 对比：worker 已下载包、判断 libil2cpp/global-metadata，并在配置 Il2CppDumper 时执行真实 dump；DummyDll compare 待迁移。
+6. [partial] 实现批量相邻对比：版本级任务建模、排序、下载复用和 pair 状态汇总已落地；真实 compare 并发后续接入。
 7. 实现报告 GCS/S3 存储和 signed URL。
 8. 实现 API Key + 飞书 OAuth 管理后台，形态参考 APS。
 9. [partial] 实现成功、失败、worker 启动和 TTL 四类清理：worker loop 和 TTL 清理已落地。
@@ -550,15 +558,22 @@ services:
 - `app/main.py` 提供 FastAPI 服务、`/health`、`/discover` 和 `/`。
 - `app/db.py` 使用 SQLite 保存 task/version/pair/artifact，支持提交和查询任务。
 - `app/api/routes.py` 支持 `/api/v1/unity-checks`、`/api/v1/comparisons`、`/api/v1/batch-comparisons`、`/api/v1/tasks/{taskId}`。
-- `app/worker/loop.py` 可领取 queued task 并跑占位执行器，验证状态流转和清理入口。
-- `app/aps/client.py` 已具备下载接口、APS `202` 轮询和重定向跟随能力，但还未接入执行器。
+- `app/worker/loop.py` 可领取 queued task，执行 APS 下载、Unity 包判断、pair 成败汇总和清理。
+- `app/aps/client.py` 已具备下载接口、APS `202` 轮询和重定向跟随能力，并已接入执行器。
+- `app/unity/dumper.py` 支持扫描 APK/XAPK 内嵌 APK、提取 `libil2cpp.so`/`global-metadata.dat`，并在 `IL2CPP_DUMPER_PATH` 或仓库 `lib/product` 可用时运行 Il2CppDumper。
+- `lib/product/Il2CppDumper/` 已从主监控项目迁入；Docker 默认使用 Linux 二进制，本地 macOS 会自动使用 osx 二进制。
 - `PROJECT_MAP.md` 记录当前代码入口和模块边界。
 
 刻意暂缓：
 
 - 飞书 OAuth 管理后台和 API Key 管理页面；当前先用 `AUTH_ENABLED=true` + `API_KEYS=key1,key2` 做数据 API 门禁。
-- GCS/S3 报告 signed URL；当前查询返回 artifact objectKey，占位执行器不写真实报告。
-- 真实 Il2Cpp dump / DummyDll compare；下一步从主监控项目迁移 `AppDumper` 和 `XapkComparator` 的可复用部分。
+- GCS/S3 报告 signed URL；当前查询返回 artifact objectKey，占位 report 只表示 pair 通过基础 Unity 检查。
+- DllAnalyzer 二进制、DummyDll compare 和 HTML/AI 报告；下一步从主监控项目迁移 `XapkComparator`/`UnityUpdateMonitor` 的可复用部分。
+
+当前降级策略：
+
+- 未配置 `IL2CPP_DUMPER_PATH` 且仓库未放置 `lib/product/Il2CppDumper/{linux|osx}/Il2CppDumper` 时，worker 只做基础 Unity 结构检查并继续流转，避免开发环境没有大二进制时无法跑通。
+- 一旦显式配置 `IL2CPP_DUMPER_PATH`，dump 失败会标记 version failed，不再静默降级。
 
 ## 待定事项
 

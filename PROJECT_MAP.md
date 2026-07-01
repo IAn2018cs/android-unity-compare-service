@@ -19,12 +19,13 @@ android-unity-compare-service/
     models.py            # 任务、版本、pair 状态和请求模型
     api/routes.py        # 提交/查询任务和公开 discover/home
     auth/deps.py         # 当前最小 API Key 依赖
-    aps/client.py        # APS 下载 client，占位待接 worker
+    aps/client.py        # APS 下载 client，支持 202 轮询和重定向跟随
     worker/loop.py       # worker 主循环
-    worker/executor.py   # 当前占位执行器，验证状态流转
+    worker/executor.py   # 下载包、判断 Unity 可 dump、汇总 pair 状态
     worker/cleanup.py    # WORK_DIR TTL 清理
-    unity/dumper.py      # 轻量 Unity 包判断，占位待迁移真实 dump
+    unity/dumper.py      # Unity 包判断、Il2CppDumper 输入提取和真实 dump 入口
   tests/test_service.py  # API、鉴权和 worker 状态流转 smoke tests
+  lib/product/Il2CppDumper/
   docker-compose.yml     # compare-api + compare-worker
   Dockerfile
   pyproject.toml
@@ -40,13 +41,15 @@ android-unity-compare-service/
 - `POST /api/v1/batch-comparisons`
 - `GET /api/v1/tasks/{taskId}`
 - SQLite 保存 `task`、`version`、`pair`、`artifact`
-- worker 可领取 queued task 并跑通占位状态流转
+- worker 可领取 queued task，调用 APS 下载包，判断 Unity 可 dump，并在配置 Il2CppDumper 时执行真实 dump
+- 仓库内置 `lib/product/Il2CppDumper`，Docker 默认使用 Linux 版本
+- Docker 镜像安装 .NET 8 runtime（非 SDK）和 `libicu76`；Compose 固定 `linux/amd64`
 - `AUTH_ENABLED=true` 时支持静态 `API_KEYS` 门禁
 
 ## 暂缓能力
 
-- APS client 接入 worker 的真实包下载
-- 主监控项目的 Il2Cpp dump、DummyDll compare 和报告生成迁移
+- DllAnalyzer 二进制入仓或镜像挂载策略
+- 主监控项目的 DummyDll compare 和报告生成迁移
 - GCS/S3 报告上传和 signed URL
 - 飞书 OAuth 管理后台、API Key 创建/吊销
 - cancel/retry 接口
@@ -54,9 +57,11 @@ android-unity-compare-service/
 ## 本地运行
 
 ```bash
-python -m pytest -q
-python -m uvicorn app.main:app --host 127.0.0.1 --port 18080
-python -m app.worker.loop
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m pytest -q
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 18080
+.venv/bin/python -m app.worker.loop
 ```
 
 ## 文档维护规则
