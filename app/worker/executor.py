@@ -1,11 +1,11 @@
 import asyncio
 from pathlib import Path
-import shutil
 
 from app.aps.client import ApsClient
 from app.config import Settings
 from app.db import TaskStore
 from app.models import PairStatus, TaskStatus, VersionRef, VersionStatus
+from app.storage import build_report_storage
 from app.unity.compare import compare_dummy_dirs
 from app.unity.dumper import DumperNotConfigured, dump_package, looks_like_unity_package
 
@@ -15,6 +15,7 @@ class TaskExecutor:
         self.settings = settings
         self.store = store
         self.aps_client = aps_client or ApsClient(settings)
+        self.report_storage = build_report_storage(settings)
 
     def run(self, task_id: str) -> None:
         asyncio.run(self._run(task_id))
@@ -103,17 +104,15 @@ class TaskExecutor:
             )
             self.store.mark_pair(pair["pairId"], PairStatus.UPLOADING)
             for source, content_type in ((artifacts.json_path, "application/json"), (artifacts.html_path, "text/html")):
-                object_key = self._persist_artifact(package_name, task_id, pair["pairId"], source)
+                object_key = self._persist_artifact(package_name, task_id, pair["pairId"], source, content_type)
                 self.store.add_artifact(task_id, pair["pairId"], source.name, object_key, content_type)
             self.store.mark_pair(pair["pairId"], PairStatus.SUCCEEDED)
         except Exception as exc:
             self.store.mark_pair(pair["pairId"], PairStatus.FAILED, str(exc))
 
-    def _persist_artifact(self, package_name: str, task_id: str, pair_id: str, source: Path) -> str:
+    def _persist_artifact(self, package_name: str, task_id: str, pair_id: str, source: Path, content_type: str) -> str:
         object_key = f"{self.settings.report_storage_prefix}/{package_name}/{task_id}/{pair_id}/{source.name}"
-        target = Path(self.settings.data_dir) / "reports" / object_key
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+        self.report_storage.upload_file(source, object_key, content_type)
         return object_key
 
     @staticmethod

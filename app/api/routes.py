@@ -5,6 +5,7 @@ from app.auth.deps import require_api_key
 from app.config import Settings, get_settings
 from app.db import TaskStore
 from app.models import BatchCompareRequest, PairCompareRequest, UnityCheckRequest
+from app.storage import build_report_storage
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
 discover_router = APIRouter()
@@ -31,11 +32,28 @@ async def create_batch_comparison(request: BatchCompareRequest, store: TaskStore
 
 
 @router.get("/tasks/{task_id}")
-async def get_task(task_id: str, store: TaskStore = Depends(get_store)):
+async def get_task(task_id: str, settings: Settings = Depends(get_settings), store: TaskStore = Depends(get_store)):
     task = store.get_task(task_id)
     if task is None:
         return JSONResponse({"error": "NOT_FOUND", "message": "Task not found."}, status_code=404)
+    add_signed_urls(task, settings)
     return JSONResponse(task)
+
+
+def add_signed_urls(task: dict, settings: Settings) -> None:
+    all_artifacts = [task["artifacts"], *(item["artifacts"] for item in task["comparisons"])]
+    if not any(all_artifacts):
+        return
+    storage = build_report_storage(settings)
+    for artifacts in all_artifacts:
+        for artifact in artifacts:
+            url = storage.signed_url(
+                artifact["objectKey"],
+                expires_in=settings.report_signed_url_ttl_seconds,
+                filename=artifact["name"],
+            )
+            if url:
+                artifact["url"] = url
 
 
 @discover_router.get("/discover")
@@ -65,7 +83,7 @@ async def discover(request: Request, settings: Settings = Depends(get_settings))
             "task": "顶层异步任务，包含一个 Unity 校验、一个 pair 对比，或一个批量相邻对比。",
             "version": "任务内的某个版本，包含下载和 dump 状态。",
             "pair": "相邻两个版本的对比段。",
-            "report_artifact": "上传到报告对象存储的报告文件；第一版本地存 objectKey，signed URL 后续接存储后端。",
+            "report_artifact": "上传到报告对象存储的报告文件；SQLite 存 objectKey，查询任务时实时补 signed URL。",
         },
         "endpoints": {
             "tasks": {
@@ -88,6 +106,16 @@ async def discover(request: Request, settings: Settings = Depends(get_settings))
                 "COMPARE_CONCURRENCY": {"default": str(settings.compare_concurrency), "description": "同时执行 pair 对比的数量"},
                 "IL2CPP_DUMPER_PATH": {"default": str(settings.il2cpp_dumper_path or ""), "description": "Il2CppDumper 可执行文件路径"},
                 "DLL_ANALYZER_PATH": {"default": str(settings.dll_analyzer_path or ""), "description": "DllAnalyzer 可执行文件路径"},
+                "REPORT_STORAGE_BACKEND": {"default": settings.report_storage_backend, "description": "报告存储后端：local/gcs/s3"},
+                "REPORT_SIGNED_URL_TTL_SECONDS": {"default": str(settings.report_signed_url_ttl_seconds), "description": "报告 signed URL 有效期"},
+                "REPORT_STORAGE_PREFIX": {"default": settings.report_storage_prefix, "description": "报告对象 key 前缀"},
+                "REPORT_GCS_BUCKET": {"default": "", "description": "GCS 报告桶名"},
+                "REPORT_GCS_CREDENTIALS_JSON": {"default": "", "description": "GCS service account JSON 内容或文件路径"},
+                "REPORT_S3_BUCKET": {"default": "", "description": "S3 报告桶名"},
+                "REPORT_S3_REGION": {"default": "", "description": "S3 区域"},
+                "REPORT_S3_ENDPOINT_URL": {"default": "", "description": "S3 兼容端点，可留空使用 AWS"},
+                "REPORT_S3_ACCESS_KEY_ID": {"default": "", "description": "S3 access key，可留空走实例角色"},
+                "REPORT_S3_SECRET_ACCESS_KEY": {"default": "", "description": "S3 secret key，可留空走实例角色"},
                 "OPENAI_API_KEY": {"default": "", "description": "配置后 HTML 报告会调用 OpenAI-compatible API 生成 AI 分析"},
                 "OPENAI_BASE_URL": {"default": "https://api.openai.com/v1", "description": "OpenAI-compatible API base URL"},
                 "OPENAI_MODEL": {"default": "gpt-4.1", "description": "AI 分析使用的模型"},

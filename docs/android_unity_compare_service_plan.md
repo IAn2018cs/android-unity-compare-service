@@ -372,7 +372,7 @@ Authorization: Bearer <api-key>
 
 报告 signed URL 在查询时实时生成，不把会过期的 URL 固化进 SQLite。
 
-当前最小实现还没有报告存储后端，查询任务时 artifact 返回 `objectKey` 和 `contentType`，不返回 signed URL；阶段 7 接入 GCS/S3 后再改为实时签名 URL。
+当前实现对 `REPORT_STORAGE_BACKEND=gcs|s3` 的 artifact 返回 `objectKey`、`contentType` 和实时 signed URL；`local` 后端只返回 `objectKey` 和 `contentType`。
 
 ## 任务模型
 
@@ -492,19 +492,19 @@ WORK_DIR/{task_id}/
 
 对比服务只抽象报告存储，不抽象包存储。
 
-当前最小实现先把报告文件复制到 `DATA_DIR/reports/{REPORT_STORAGE_PREFIX}/{taskId}/{pairId}/`，并把该路径作为 artifact `objectKey` 写入 SQLite。报告内容兼容主监控项目 `UnityUpdateMonitor.generate_full_report()` 的 JSON 顶层字段、`summary`、`overall_statistics` 和 `dll_comparisons` 结构；HTML 报告沿用主监控项目的统计、变更详情、详细对比和 AI 智能分析区块。配置 `OPENAI_API_KEY` 后，HTML 报告会调用 OpenAI-compatible `/chat/completions` 生成 Markdown 分析；未配置或调用失败时只在 HTML 中显示提示，不改变 JSON 报告内容契约。GCS/S3 接入后只替换 artifact 上传和签名 URL，不改变报告内容契约。
+当前实现先生成 `report.json` 和 `report.html`，再按 `REPORT_STORAGE_BACKEND=local|gcs|s3` 上传，并把对象 key 作为 artifact `objectKey` 写入 SQLite。`local` 后端复制到 `DATA_DIR/reports/{REPORT_STORAGE_PREFIX}/{packageName}/{taskId}/{pairId}/`；GCS/S3 后端上传到桶内同名 key。查询任务时实时生成 signed URL，不把过期 URL 固化进 SQLite。报告内容兼容主监控项目 `UnityUpdateMonitor.generate_full_report()` 的 JSON 顶层字段、`summary`、`overall_statistics` 和 `dll_comparisons` 结构；HTML 报告沿用主监控项目的统计、变更详情、详细对比和 AI 智能分析区块。配置 `OPENAI_API_KEY` 后，HTML 报告会调用 OpenAI-compatible `/chat/completions` 生成 Markdown 分析；未配置或调用失败时只在 HTML 中显示提示，不改变 JSON 报告内容契约。
 
 接口：
 
 ```python
 class ReportStorage:
     def upload_file(local_path, key, content_type): ...
-    def upload_dir(local_dir, prefix): ...
     def signed_url(key, ttl_seconds, filename): ...
 ```
 
-第一版支持：
+当前支持：
 
+- `REPORT_STORAGE_BACKEND=local`
 - `REPORT_STORAGE_BACKEND=gcs`
 - `REPORT_STORAGE_BACKEND=s3`
 
@@ -556,7 +556,7 @@ services:
 4. [done] 迁移 Unity dump、对比、报告生成代码和二进制：已迁移 Il2CppDumper、DllAnalyzer 单文件二进制、DummyDll compare、兼容内容报告和 HTML AI 分析调用。
 5. [done] 实现 Unity 可导校验和单 pair 对比：worker 已下载包、判断 libil2cpp/global-metadata，执行真实 dump，并对 DummyDll 生成 JSON/HTML 报告。
 6. [partial] 实现批量相邻对比：版本级任务建模、排序、下载复用和 pair 状态汇总已落地；当前执行器按 pair 顺序处理，后续再按 `COMPARE_CONCURRENCY` 做并发调度。
-7. 实现报告 GCS/S3 存储和 signed URL。
+7. [done] 实现报告 local/GCS/S3 存储和 signed URL。
 8. 实现 API Key + 飞书 OAuth 管理后台，形态参考 APS。
 9. [partial] 实现成功、失败、worker 启动和 TTL 四类清理：worker loop 和 TTL 清理已落地。
 10. [partial] 增加 fake APS 或 mock APS 的 smoke test：当前覆盖 API 提交/查询和鉴权门禁。
@@ -570,6 +570,7 @@ services:
 - `app/api/routes.py` 支持 `/api/v1/unity-checks`、`/api/v1/comparisons`、`/api/v1/batch-comparisons`、`/api/v1/tasks/{taskId}`。
 - `app/worker/loop.py` 可领取 queued task，执行 APS 下载、Unity 包判断、pair 成败汇总和清理。
 - `app/aps/client.py` 已具备下载接口、APS `202` 轮询和重定向跟随能力，并已接入执行器。
+- `app/storage.py` 支持报告 local/GCS/S3 上传；查询任务时对 GCS/S3 artifact 实时生成 signed URL。
 - `app/unity/dumper.py` 支持扫描 APK/XAPK 内嵌 APK、提取 `libil2cpp.so`/`global-metadata.dat`，并在 `IL2CPP_DUMPER_PATH` 或仓库 `lib/product` 可用时运行 Il2CppDumper。
 - `app/unity/compare.py` 迁移主监控项目 DummyDll 对比逻辑，调用 `DllAnalyzer <dll> <output_json>` 分析 DLL，并按原项目字段结构生成 compare report。
 - `app/unity/report.py` 生成 HTML 报告，内容区块和字段读取方式兼容主监控项目；配置 `OPENAI_API_KEY` 时会调用 OpenAI-compatible API 生成 AI 智能分析，未配置或失败时保留提示。
@@ -580,7 +581,6 @@ services:
 刻意暂缓：
 
 - 飞书 OAuth 管理后台和 API Key 管理页面；当前先用 `AUTH_ENABLED=true` + `API_KEYS=key1,key2` 做数据 API 门禁。
-- GCS/S3 报告 signed URL；当前查询返回 artifact objectKey，本地报告保存在 `DATA_DIR/reports/`。
 
 当前降级策略：
 

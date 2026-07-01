@@ -18,7 +18,7 @@ COPY app ./app
 COPY lib ./lib
 
 RUN pip install --no-cache-dir -U pip \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir '.[s3,gcs]'
 
 ENV PORT=8080
 ENV DATA_DIR=/app/data

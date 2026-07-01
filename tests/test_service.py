@@ -6,6 +6,7 @@ from app.aps.client import ApsClient
 from app.config import get_settings
 from app.db import TaskStore
 from app.main import app
+from app.models import PairCompareRequest
 from app.unity.compare import compare_dummy_dirs
 from app.unity.dumper import extract_unity_inputs, looks_like_unity_package
 from app.worker.executor import TaskExecutor
@@ -35,6 +36,8 @@ def test_health_and_discover(tmp_path):
     body = c.get("/discover").json()
     assert body["name"] == "Android Unity Compare Service"
     assert "/api/v1/comparisons" in body["auth"]["api_key_endpoints"]
+    assert "REPORT_STORAGE_BACKEND" in body["config"]["variables"]
+    assert "REPORT_S3_BUCKET" in body["config"]["variables"]
     assert "OPENAI_API_KEY" in body["config"]["variables"]
 
 
@@ -93,12 +96,34 @@ def test_worker_executor_marks_task_done(tmp_path, monkeypatch):
     store = TaskStore(settings.task_db_path)
     assert store.claim_tasks(1) == [task_id]
     monkeypatch.setattr("app.worker.executor.dump_package", fake_dump_package)
+    monkeypatch.setattr("app.worker.executor.build_report_storage", lambda _settings: FakeReportStorage())
     TaskExecutor(settings, store, FakeApsClient(unity=True)).run(task_id)
 
     task = c.get(f"/api/v1/tasks/{task_id}").json()
     assert task["status"] == "succeeded"
     assert task["progress"]["versionsDumped"] == 2
     assert task["progress"]["comparisonsCompleted"] == 1
+
+
+def test_task_query_adds_report_signed_urls(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    settings = get_settings()
+    store = TaskStore(settings.task_db_path)
+    task_id = store.create_pair_compare(
+        PairCompareRequest(
+            packageName="com.example.game",
+            oldVersion={"versionCode": "100"},
+            newVersion={"versionCode": "101"},
+        )
+    )
+    pair_id = store.get_task(task_id)["comparisons"][0]["pairId"]
+    store.add_artifact(task_id, pair_id, "report.html", "unity-compare-reports/com.example.game/report.html", "text/html")
+    monkeypatch.setattr("app.api.routes.build_report_storage", lambda _settings: FakeReportStorage())
+
+    artifact = c.get(f"/api/v1/tasks/{task_id}").json()["comparisons"][0]["artifacts"][0]
+
+    assert artifact["objectKey"] == "unity-compare-reports/com.example.game/report.html"
+    assert artifact["url"] == "https://signed.local/report.html?ttl=3600"
 
 
 def test_worker_executor_fails_pair_for_non_unity_package(tmp_path):
@@ -256,6 +281,17 @@ def fake_dump_package(package_path, output_dir, **kwargs):
     dummy = output_dir / "DummyDll"
     dummy.mkdir(parents=True, exist_ok=True)
     return dummy
+
+
+class FakeReportStorage:
+    def __init__(self):
+        self.uploads = []
+
+    def upload_file(self, local_path, key, content_type):
+        self.uploads.append((local_path, key, content_type))
+
+    def signed_url(self, key, expires_in, filename):
+        return f"https://signed.local/{filename}?ttl={expires_in}"
 
 
 def fake_analyze_dll(dll_path, analyzer, timeout_seconds):

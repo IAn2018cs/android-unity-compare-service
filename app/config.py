@@ -39,8 +39,28 @@ class Settings(BaseSettings):
     report_storage_backend: str = "local"
     report_signed_url_ttl_seconds: int = 3600
     report_storage_prefix: str = "unity-compare-reports"
+    report_gcs_bucket: str | None = None
+    report_gcs_credentials_json: str | None = None
+    report_s3_bucket: str | None = None
+    report_s3_region: str | None = None
+    report_s3_endpoint_url: str | None = None
+    report_s3_access_key_id: str | None = None
+    report_s3_secret_access_key: str | None = None
 
-    @field_validator("api_keys", "aps_api_key", "il2cpp_dumper_path", "dll_analyzer_path", mode="before")
+    @field_validator(
+        "api_keys",
+        "aps_api_key",
+        "il2cpp_dumper_path",
+        "dll_analyzer_path",
+        "report_gcs_bucket",
+        "report_gcs_credentials_json",
+        "report_s3_bucket",
+        "report_s3_region",
+        "report_s3_endpoint_url",
+        "report_s3_access_key_id",
+        "report_s3_secret_access_key",
+        mode="before",
+    )
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
