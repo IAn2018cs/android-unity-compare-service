@@ -24,8 +24,11 @@ android-unity-compare-service/
     worker/executor.py   # 下载包、判断 Unity 可 dump、汇总 pair 状态
     worker/cleanup.py    # WORK_DIR TTL 清理
     unity/dumper.py      # Unity 包判断、Il2CppDumper 输入提取和真实 dump 入口
-  tests/test_service.py  # API、鉴权和 worker 状态流转 smoke tests
+    unity/compare.py     # DummyDll 对比，报告 JSON 内容兼容主监控项目
+    unity/report.py      # HTML 报告生成
+  tests/test_service.py  # API、鉴权、worker 和报告内容契约 smoke tests
   lib/product/Il2CppDumper/
+  lib/product/DllAnalyzer/
   docker-compose.yml     # compare-api + compare-worker
   Dockerfile
   pyproject.toml
@@ -43,14 +46,15 @@ android-unity-compare-service/
 - SQLite 保存 `task`、`version`、`pair`、`artifact`
 - worker 可领取 queued task，调用 APS 下载包，判断 Unity 可 dump，并在配置 Il2CppDumper 时执行真实 dump
 - 仓库内置 `lib/product/Il2CppDumper`，Docker 默认使用 Linux 版本
-- Docker 镜像安装 .NET 8 runtime（非 SDK）和 `libicu76`；Compose 固定 `linux/amd64`
+- 仓库内置 `lib/product/DllAnalyzer` 单文件二进制，Docker 默认使用 Linux 版本
+- DummyDll compare 已迁入，产出 `report.json` 和 `report.html`，JSON 内容结构兼容主监控项目
+- Docker 镜像安装 .NET 8 和 .NET 9 runtime（非 SDK）以及 `libicu76`；Compose 固定 `linux/amd64`
 - `AUTH_ENABLED=true` 时支持静态 `API_KEYS` 门禁
 
 ## 暂缓能力
 
-- DllAnalyzer 二进制入仓或镜像挂载策略
-- 主监控项目的 DummyDll compare 和报告生成迁移
 - GCS/S3 报告上传和 signed URL
+- AI 分析调用迁移
 - 飞书 OAuth 管理后台、API Key 创建/吊销
 - cancel/retry 接口
 

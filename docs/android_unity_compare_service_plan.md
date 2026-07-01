@@ -57,7 +57,7 @@ Compare VM
 - 独立 worker loop：后台执行下载、dump、对比、上传和清理。
 - Docker Compose：部署 `compare-api` 和 `compare-worker`。
 - 复用当前仓库的 Unity dump/compare 代码和 `lib/product` 二进制。
-- Docker 镜像安装 .NET 8 runtime（非 SDK）和 `libicu`，用于运行 `lib/product/Il2CppDumper`。当前 Linux Il2CppDumper 是 x86-64，Compose 固定 `platform: linux/amd64`。
+- Docker 镜像安装 .NET 8 和 .NET 9 runtime（非 SDK）以及 `libicu`，用于运行 `lib/product/Il2CppDumper` 和 `lib/product/DllAnalyzer`。当前 Linux 二进制是 x86-64，Compose 固定 `platform: linux/amd64`。
 
 第一版不引入 Redis、Celery、Postgres、Kubernetes、动态多机器调度。等单台 compare VM 被打满后再升级。
 
@@ -118,9 +118,12 @@ android-unity-compare-service/
     worker/executor.py   # 下载包、判断 Unity 可 dump、汇总 pair 状态
     worker/cleanup.py    # WORK_DIR TTL 清理
     unity/dumper.py      # Unity 包判断、Il2CppDumper 输入提取和真实 dump 入口
+    unity/compare.py     # DummyDll 目录对比，内容契约兼容主监控项目
+    unity/report.py      # HTML 报告生成，字段读取方式兼容主监控项目
   tests/test_service.py
   PROJECT_MAP.md
   lib/product/Il2CppDumper/
+  lib/product/DllAnalyzer/
   docker-compose.yml
   Dockerfile
   pyproject.toml
@@ -171,6 +174,8 @@ DUMP_CONCURRENCY=2
 COMPARE_CONCURRENCY=2
 IL2CPP_DUMPER_PATH=/app/lib/product/Il2CppDumper/linux/Il2CppDumper
 IL2CPP_DUMPER_TIMEOUT_SECONDS=3600
+DLL_ANALYZER_PATH=/app/lib/product/DllAnalyzer/linux/DllAnalyzer
+DLL_ANALYZER_TIMEOUT_SECONDS=300
 
 DATA_DIR=/app/data
 WORK_DIR=/app/work
@@ -486,6 +491,8 @@ WORK_DIR/{task_id}/
 
 对比服务只抽象报告存储，不抽象包存储。
 
+当前最小实现先把报告文件复制到 `DATA_DIR/reports/{REPORT_STORAGE_PREFIX}/{taskId}/{pairId}/`，并把该路径作为 artifact `objectKey` 写入 SQLite。报告内容兼容主监控项目 `UnityUpdateMonitor.generate_full_report()` 的 JSON 顶层字段、`summary`、`overall_statistics` 和 `dll_comparisons` 结构；HTML 报告沿用主监控项目的统计、变更详情和详细对比区块。GCS/S3 接入后只替换 artifact 上传和签名 URL，不改变报告内容契约。
+
 接口：
 
 ```python
@@ -520,6 +527,7 @@ services:
     environment:
       PORT: 8080
       IL2CPP_DUMPER_PATH: /app/lib/product/Il2CppDumper/linux/Il2CppDumper
+      DLL_ANALYZER_PATH: /app/lib/product/DllAnalyzer/linux/DllAnalyzer
     volumes:
       - ./data:/app/data
       - ./work:/app/work
@@ -531,6 +539,7 @@ services:
     environment:
       PORT: 8080
       IL2CPP_DUMPER_PATH: /app/lib/product/Il2CppDumper/linux/Il2CppDumper
+      DLL_ANALYZER_PATH: /app/lib/product/DllAnalyzer/linux/DllAnalyzer
     volumes:
       - ./data:/app/data
       - ./work:/app/work
@@ -543,9 +552,9 @@ services:
 1. [done] 搭 FastAPI、配置、SQLite 任务表、Docker Compose。
 2. [partial] 实现公开 `/discover` 和首页 `/`；OAuth 保护的首页随管理后台阶段接入。
 3. [done] 实现 APS client：API Key、`202` 轮询、`302` 跟随下载，并接入 worker。
-4. [partial] 迁移 Unity dump、对比、报告生成代码和二进制：已迁移 Il2CppDumper 输入提取、调用入口和 Il2CppDumper 二进制；DllAnalyzer、DummyDll compare、HTML/AI 报告待迁移。
-5. [partial] 实现 Unity 可导校验和单 pair 对比：worker 已下载包、判断 libil2cpp/global-metadata，并在配置 Il2CppDumper 时执行真实 dump；DummyDll compare 待迁移。
-6. [partial] 实现批量相邻对比：版本级任务建模、排序、下载复用和 pair 状态汇总已落地；真实 compare 并发后续接入。
+4. [partial] 迁移 Unity dump、对比、报告生成代码和二进制：已迁移 Il2CppDumper、DllAnalyzer 单文件二进制、DummyDll compare 和兼容内容报告；AI 分析仍待迁移或服务化。
+5. [done] 实现 Unity 可导校验和单 pair 对比：worker 已下载包、判断 libil2cpp/global-metadata，执行真实 dump，并对 DummyDll 生成 JSON/HTML 报告。
+6. [partial] 实现批量相邻对比：版本级任务建模、排序、下载复用和 pair 状态汇总已落地；当前执行器按 pair 顺序处理，后续再按 `COMPARE_CONCURRENCY` 做并发调度。
 7. 实现报告 GCS/S3 存储和 signed URL。
 8. 实现 API Key + 飞书 OAuth 管理后台，形态参考 APS。
 9. [partial] 实现成功、失败、worker 启动和 TTL 四类清理：worker loop 和 TTL 清理已落地。
@@ -561,14 +570,17 @@ services:
 - `app/worker/loop.py` 可领取 queued task，执行 APS 下载、Unity 包判断、pair 成败汇总和清理。
 - `app/aps/client.py` 已具备下载接口、APS `202` 轮询和重定向跟随能力，并已接入执行器。
 - `app/unity/dumper.py` 支持扫描 APK/XAPK 内嵌 APK、提取 `libil2cpp.so`/`global-metadata.dat`，并在 `IL2CPP_DUMPER_PATH` 或仓库 `lib/product` 可用时运行 Il2CppDumper。
+- `app/unity/compare.py` 迁移主监控项目 DummyDll 对比逻辑，调用 `DllAnalyzer <dll> <output_json>` 分析 DLL，并按原项目字段结构生成 compare report。
+- `app/unity/report.py` 生成 HTML 报告，内容区块和字段读取方式兼容主监控项目；AI 分析区当前保留未配置提示。
 - `lib/product/Il2CppDumper/` 已从主监控项目迁入；Docker 默认使用 Linux 二进制，本地 macOS 会自动使用 osx 二进制。
+- `lib/product/DllAnalyzer/` 已从主监控项目重新发布为单文件二进制：Linux `linux-x64`、macOS `osx-arm64`。Docker 默认使用 Linux 版本。
 - `PROJECT_MAP.md` 记录当前代码入口和模块边界。
 
 刻意暂缓：
 
 - 飞书 OAuth 管理后台和 API Key 管理页面；当前先用 `AUTH_ENABLED=true` + `API_KEYS=key1,key2` 做数据 API 门禁。
-- GCS/S3 报告 signed URL；当前查询返回 artifact objectKey，占位 report 只表示 pair 通过基础 Unity 检查。
-- DllAnalyzer 二进制、DummyDll compare 和 HTML/AI 报告；下一步从主监控项目迁移 `XapkComparator`/`UnityUpdateMonitor` 的可复用部分。
+- GCS/S3 报告 signed URL；当前查询返回 artifact objectKey，本地报告保存在 `DATA_DIR/reports/`。
+- AI 分析调用；当前报告内容先保持确定性的 DummyDll 差异，HTML 中显示未配置 AI 的提示。
 
 当前降级策略：
 

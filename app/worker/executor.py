@@ -1,10 +1,12 @@
 import asyncio
 from pathlib import Path
+import shutil
 
 from app.aps.client import ApsClient
 from app.config import Settings
 from app.db import TaskStore
 from app.models import PairStatus, TaskStatus, VersionRef, VersionStatus
+from app.unity.compare import compare_dummy_dirs
 from app.unity.dumper import DumperNotConfigured, dump_package, looks_like_unity_package
 
 
@@ -84,9 +86,35 @@ class TaskExecutor:
             self.store.mark_pair(pair["pairId"], PairStatus.FAILED, "pair 两端必须都是可 dump Unity 包")
             return
         self.store.mark_pair(pair["pairId"], PairStatus.COMPARING)
-        # ponytail: real DummyDll compare replaces this metadata artifact in the next migration step.
-        self.store.add_artifact(task_id, pair["pairId"], "report.json", f"{task_id}/{pair['pairId']}/report.json", "application/json")
-        self.store.mark_pair(pair["pairId"], PairStatus.SUCCEEDED)
+        try:
+            package_name = self.store.get_task(task_id)["packageName"]
+            report_dir = Path(self.settings.work_dir) / task_id / "reports" / pair["pairId"]
+            artifacts = compare_dummy_dirs(
+                Path(old["dumpPath"]),
+                Path(new["dumpPath"]),
+                report_dir,
+                metadata={
+                    "package_name": package_name,
+                    "old_version_name": old["versionName"] or old["versionCode"],
+                    "new_version_name": new["versionName"] or new["versionCode"],
+                },
+                dll_analyzer_path=self.settings.dll_analyzer_path,
+                timeout_seconds=self.settings.dll_analyzer_timeout_seconds,
+            )
+            self.store.mark_pair(pair["pairId"], PairStatus.UPLOADING)
+            for source, content_type in ((artifacts.json_path, "application/json"), (artifacts.html_path, "text/html")):
+                object_key = self._persist_artifact(package_name, task_id, pair["pairId"], source)
+                self.store.add_artifact(task_id, pair["pairId"], source.name, object_key, content_type)
+            self.store.mark_pair(pair["pairId"], PairStatus.SUCCEEDED)
+        except Exception as exc:
+            self.store.mark_pair(pair["pairId"], PairStatus.FAILED, str(exc))
+
+    def _persist_artifact(self, package_name: str, task_id: str, pair_id: str, source: Path) -> str:
+        object_key = f"{self.settings.report_storage_prefix}/{package_name}/{task_id}/{pair_id}/{source.name}"
+        target = Path(self.settings.data_dir) / "reports" / object_key
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        return object_key
 
     @staticmethod
     def _task_status(task: dict) -> TaskStatus:

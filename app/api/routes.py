@@ -86,6 +86,8 @@ async def discover(request: Request, settings: Settings = Depends(get_settings))
                 "DOWNLOAD_CONCURRENCY": {"default": str(settings.download_concurrency), "description": "同时从 APS 下载包的数量"},
                 "DUMP_CONCURRENCY": {"default": str(settings.dump_concurrency), "description": "同时执行 Il2Cpp dump 的数量"},
                 "COMPARE_CONCURRENCY": {"default": str(settings.compare_concurrency), "description": "同时执行 pair 对比的数量"},
+                "IL2CPP_DUMPER_PATH": {"default": str(settings.il2cpp_dumper_path or ""), "description": "Il2CppDumper 可执行文件路径"},
+                "DLL_ANALYZER_PATH": {"default": str(settings.dll_analyzer_path or ""), "description": "DllAnalyzer 可执行文件路径"},
             }
         },
         "workflows": {

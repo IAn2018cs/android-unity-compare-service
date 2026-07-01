@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     compare_concurrency: int = Field(default=2, ge=1)
     il2cpp_dumper_path: Path | None = None
     il2cpp_dumper_timeout_seconds: float = 3600.0
+    dll_analyzer_path: Path | None = None
+    dll_analyzer_timeout_seconds: float = 300.0
 
     keep_failed_work_dir: bool = False
     work_dir_ttl_hours: float = 24.0
@@ -38,7 +40,7 @@ class Settings(BaseSettings):
     report_signed_url_ttl_seconds: int = 3600
     report_storage_prefix: str = "unity-compare-reports"
 
-    @field_validator("api_keys", "aps_api_key", "il2cpp_dumper_path", mode="before")
+    @field_validator("api_keys", "aps_api_key", "il2cpp_dumper_path", "dll_analyzer_path", mode="before")
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value

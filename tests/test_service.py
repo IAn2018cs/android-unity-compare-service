@@ -5,6 +5,7 @@ from app.aps.client import ApsClient
 from app.config import get_settings
 from app.db import TaskStore
 from app.main import app
+from app.unity.compare import compare_dummy_dirs
 from app.unity.dumper import extract_unity_inputs, looks_like_unity_package
 from app.worker.executor import TaskExecutor
 
@@ -150,6 +151,57 @@ def test_unity_detector_reads_nested_xapk(tmp_path):
     assert metadata.read_bytes() == b"metadata"
 
 
+def test_compare_report_keeps_monitor_content_contract(tmp_path, monkeypatch):
+    old_dir = tmp_path / "old" / "DummyDll"
+    new_dir = tmp_path / "new" / "DummyDll"
+    old_dir.mkdir(parents=True)
+    new_dir.mkdir(parents=True)
+    for name in ["Assembly-CSharp.dll", "Sdk.dll", "Removed.dll"]:
+        (old_dir / name).write_bytes(b"old")
+    for name in ["Assembly-CSharp.dll", "Sdk.dll", "Added.dll"]:
+        (new_dir / name).write_bytes(b"new")
+    analyzer = tmp_path / "DllAnalyzer"
+    analyzer.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    monkeypatch.setattr("app.unity.compare.analyze_dll", fake_analyze_dll)
+    artifacts = compare_dummy_dirs(
+        old_dir,
+        new_dir,
+        tmp_path / "reports",
+        metadata={"package_name": "com.example.game", "old_version_name": "1.0.0", "new_version_name": "1.0.1"},
+        dll_analyzer_path=analyzer,
+    )
+
+    report = artifacts.report
+    assert set(report) == {
+        "timestamp",
+        "old_directory",
+        "new_directory",
+        "app_name",
+        "old_version_name",
+        "new_version_name",
+        "overall_statistics",
+        "summary",
+        "dll_comparisons",
+        "detailed_game_logic_changes",
+    }
+    assert set(report["summary"]) == {
+        "added_dlls",
+        "removed_dlls",
+        "changed_dlls",
+        "unchanged_dlls",
+        "version_only_changes",
+        "content_changes",
+    }
+    assert "analysis_failed_dll_count" not in report["overall_statistics"]
+    assert report["summary"]["added_dlls"] == ["Added.dll"]
+    assert report["summary"]["removed_dlls"] == ["Removed.dll"]
+    assert report["summary"]["content_changes"] == ["Assembly-CSharp.dll"]
+    assert report["summary"]["version_only_changes"] == ["Sdk.dll"]
+    assert artifacts.json_path.exists()
+    assert artifacts.html_path.exists()
+
+
 class FakeApsClient:
     def __init__(self, unity: bool):
         self.unity = unity
@@ -169,6 +221,33 @@ def fake_dump_package(package_path, output_dir, **kwargs):
     dummy = output_dir / "DummyDll"
     dummy.mkdir(parents=True, exist_ok=True)
     return dummy
+
+
+def fake_analyze_dll(dll_path, analyzer, timeout_seconds):
+    if dll_path.name == "Assembly-CSharp.dll":
+        methods = ["Game.Player::Move"]
+        if dll_path.parent.parent.name == "new":
+            methods.append("Game.Player::Jump")
+        return {
+            "AssemblyName": "Assembly-CSharp",
+            "Version": "1.0.0.0",
+            "Classes": [
+                {
+                    "FullName": "Game.Player",
+                    "Namespace": "Game",
+                    "Name": "Player",
+                    "Methods": methods,
+                    "Fields": [],
+                    "Properties": [],
+                    "Attributes": {},
+                }
+            ],
+            "SdkVersions": {},
+        }
+    if dll_path.name == "Sdk.dll":
+        version = "1.0.0" if dll_path.parent.parent.name == "old" else "1.1.0"
+        return {"AssemblyName": "Sdk", "Version": version, "Classes": [], "SdkVersions": {}}
+    return {"AssemblyName": dll_path.stem, "Version": "1.0.0", "Classes": [], "SdkVersions": {}}
 
 
 class FakeAsyncClient:

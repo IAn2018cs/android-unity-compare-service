@@ -2,12 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# lib/product/Il2CppDumper/linux/Il2CppDumper is x86_64, so build/run this image as linux/amd64.
+# lib/product linux binaries are x86_64, so build/run this image as linux/amd64.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates libicu76 \
     && curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh \
     && chmod +x dotnet-install.sh \
     && ./dotnet-install.sh --channel 8.0 --runtime dotnet --install-dir /usr/share/dotnet \
+    && ./dotnet-install.sh --channel 9.0 --runtime dotnet --install-dir /usr/share/dotnet \
     && ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet \
     && rm dotnet-install.sh \
     && rm -rf /var/lib/apt/lists/*
@@ -23,6 +24,7 @@ ENV PORT=8080
 ENV DATA_DIR=/app/data
 ENV WORK_DIR=/app/work
 ENV IL2CPP_DUMPER_PATH=/app/lib/product/Il2CppDumper/linux/Il2CppDumper
+ENV DLL_ANALYZER_PATH=/app/lib/product/DllAnalyzer/linux/DllAnalyzer
 ENV DOTNET_ROOT=/usr/share/dotnet
 
 EXPOSE 8080
