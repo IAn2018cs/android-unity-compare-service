@@ -1,0 +1,35 @@
+services:
+  compare-api:
+    build: .
+    ports:
+      - "18080:8080"
+    environment: &compare_environment
+      PORT: 8080
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:18080}
+      DATA_DIR: /app/data
+      WORK_DIR: /app/work
+      DB_PATH: /app/data/tasks.sqlite
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      API_KEYS: ${API_KEYS:-}
+      APS_BASE_URL: ${APS_BASE_URL:-http://host.docker.internal:11010}
+      APS_API_KEY: ${APS_API_KEY:-}
+      TASK_CONCURRENCY: ${TASK_CONCURRENCY:-2}
+      DOWNLOAD_CONCURRENCY: ${DOWNLOAD_CONCURRENCY:-4}
+      DUMP_CONCURRENCY: ${DUMP_CONCURRENCY:-2}
+      COMPARE_CONCURRENCY: ${COMPARE_CONCURRENCY:-2}
+      KEEP_FAILED_WORK_DIR: ${KEEP_FAILED_WORK_DIR:-false}
+      WORK_DIR_TTL_HOURS: ${WORK_DIR_TTL_HOURS:-24}
+    volumes: &compare_volumes
+      - ./data:/app/data
+      - ./work:/app/work
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  compare-worker:
+    build: .
+    command: ["python", "-m", "app.worker.loop"]
+    environment: *compare_environment
+    volumes: *compare_volumes
