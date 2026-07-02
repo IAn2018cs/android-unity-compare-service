@@ -1,0 +1,90 @@
+# 云上变体（AWS 固定 On-Demand VM + EIP + Docker Compose）。
+# 叠加在正式 docker-compose.yml 上使用：
+#   docker compose -f docker-compose.yml -f docker-compose.cloud.yml --env-file .env.cloud up -d --build
+#
+# 与 APS 云上形态的差异（对比任务中断浪费大，不用 Spot 抢占式）：
+# - 固定 On-Demand 实例 + EIP：出站源 IP 固定，满足 OPENAI_BASE_URL 的来源 IP 白名单；
+#   机器不会被回收，data/work 落在 EBS 上天然持久。
+# - 入站 HTTPS 由 caddy 容器终止（Let's Encrypt 自动证书），不再需要 ALB/ACM；
+#   安全组只放 80/443，compare-api 的宿主机 8080（.env.cloud 设 HOST_PORT=8080）仅供实例内排障。
+# - litestream 把 tasks.sqlite / auth.sqlite 持续复制到 S3 做灾备（换机重建时先恢复再启动应用）；
+#   报告本体走 REPORT_STORAGE_BACKEND=s3，同一个桶不同前缀。
+# - 凭证走实例 IAM 角色（REPORT_S3_ACCESS_KEY_ID/SECRET 留空即可）；容器要能访问 IMDS，
+#   须把实例 metadata hop-limit 设为 2（见 deploy/CONSOLE_DEPLOY.md）。
+# - 更新部署会重启 compare-worker，正在 running 的任务会被中断并在 worker 启动时标记为 failed
+#   （可 retry）；升级前先等任务跑完（见部署文档「更新部署」）。
+
+x-cloud-env: &cloud_env
+  # 公网必开鉴权；显式设 AUTH_ENABLED=false 才能关。
+  AUTH_ENABLED: ${AUTH_ENABLED:-true}
+  # 报告默认走 S3（本地盘只作工作目录）。
+  REPORT_STORAGE_BACKEND: ${REPORT_STORAGE_BACKEND:-s3}
+
+x-litestream-gate: &litestream_gate
+  litestream:
+    condition: service_healthy
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env.cloud}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  litestream:
+    image: litestream/litestream:0.3.13
+    restart: unless-stopped
+    environment:
+      S3_BUCKET: ${REPORT_S3_BUCKET:-}
+      S3_REGION: ${REPORT_S3_REGION:-}
+      # 留空 → 实例 IAM 角色。非 AWS/静态密钥时取消注释下面两行：
+      # LITESTREAM_ACCESS_KEY_ID: ${REPORT_S3_ACCESS_KEY_ID:-}
+      # LITESTREAM_SECRET_ACCESS_KEY: ${REPORT_S3_SECRET_ACCESS_KEY:-}
+    volumes:
+      - ./data:/app/data
+      - ./deploy/litestream.yml.tmpl:/etc/litestream.yml.tmpl:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+    # 先用环境变量把模板占位符 sed 展开为 /etc/litestream.yml；再 restore（缺库或无 S3 副本时
+    # 静默跳过，首次部署即空库、由应用新建）；成功后 touch ready 放行应用；最后 replicate。
+    # restore 若因配置/权限错误失败会中断 && 链、不置 ready → healthcheck 不健康 → 应用
+    # depends_on 不启动（失败可见，不会静默起空库）。
+    command:
+      - >
+        sed -e "s#__S3_BUCKET__#$${S3_BUCKET}#g" -e "s#__S3_REGION__#$${S3_REGION}#g"
+        /etc/litestream.yml.tmpl > /etc/litestream.yml &&
+        litestream restore -if-db-not-exists -if-replica-exists /app/data/tasks.sqlite &&
+        litestream restore -if-db-not-exists -if-replica-exists /app/data/auth.sqlite &&
+        touch /tmp/ready &&
+        exec litestream replicate
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    stop_grace_period: 30s
+
+  compare-api:
+    restart: unless-stopped
+    environment: *cloud_env
+    depends_on: *litestream_gate
+    stop_grace_period: 30s
+
+  compare-worker:
+    restart: unless-stopped
+    environment: *cloud_env
+    depends_on: *litestream_gate
+    stop_grace_period: 30s
+
+volumes:
+  caddy_data:
+  caddy_config:

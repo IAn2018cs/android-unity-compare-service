@@ -1,0 +1,8 @@
+# Caddy 反向代理：对外终止 HTTPS，转发到 compose 网络内的 compare-api。
+# 证书由 Caddy 自动向 Let's Encrypt 申请和续期，前提：
+# - 域名 A 记录已解析到本机 EIP；
+# - 安全组放行 80/443（80 用于 ACME HTTP challenge 和 http→https 跳转）。
+# DOMAIN 由 docker-compose.cloud.yml 从 .env.cloud 注入。
+{$DOMAIN} {
+	reverse_proxy compare-api:8080
+}

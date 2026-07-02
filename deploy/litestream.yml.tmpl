@@ -1,0 +1,20 @@
+# Litestream 配置模板：把本地 SQLite 持续增量复制到 S3，容器启动时从 S3 恢复。
+# 用途：固定 VM 的灾备——实例损坏/误删/换机重建时，新机 litestream 先从 S3 恢复
+#       任务库（tasks.sqlite）与鉴权库（auth.sqlite，API Key/管理员）再放行应用启动。
+# 与报告共用同一个 S3 桶，litestream/ 前缀（报告走 unity-compare-reports/ 前缀，互不干扰）。
+# 凭证走实例 IAM 角色（AWS 默认凭证链）。
+# __S3_BUCKET__ / __S3_REGION__ 为占位符——docker-compose.cloud.yml 的 litestream 服务启动时用
+# 环境变量经 sed 展开为 /etc/litestream.yml（不依赖 litestream 自身 env 展开行为，稳妥）。
+dbs:
+  - path: /app/data/tasks.sqlite
+    replicas:
+      - type: s3
+        bucket: __S3_BUCKET__
+        path: litestream/tasks.sqlite
+        region: __S3_REGION__
+  - path: /app/data/auth.sqlite
+    replicas:
+      - type: s3
+        bucket: __S3_BUCKET__
+        path: litestream/auth.sqlite
+        region: __S3_REGION__
