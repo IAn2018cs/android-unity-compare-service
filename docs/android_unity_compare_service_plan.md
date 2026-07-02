@@ -245,7 +245,9 @@ GET /discover
       "/api/v1/unity-checks",
       "/api/v1/comparisons",
       "/api/v1/batch-comparisons",
-      "/api/v1/tasks/{taskId}"
+      "/api/v1/tasks/{taskId}",
+      "/api/v1/tasks/{taskId}/cancel",
+      "/api/v1/tasks/{taskId}/retry"
     ],
     "session_endpoints": ["/", "/admin"]
   },
@@ -378,6 +380,22 @@ Authorization: Bearer <api-key>
 报告 signed URL 在查询时实时生成，不把会过期的 URL 固化进 SQLite。
 
 当前实现对 `REPORT_STORAGE_BACKEND=gcs|s3` 的 artifact 返回 `objectKey`、`contentType` 和实时 signed URL；`local` 后端只返回 `objectKey` 和 `contentType`。
+
+### 任务取消和重试
+
+```http
+POST /api/v1/tasks/{taskId}/cancel
+Authorization: Bearer <api-key>
+```
+
+queued/running 任务会标记为 `cancelled`。running 任务采用协作取消：worker 在下载/dump/compare 阶段边界检查状态并停止后续步骤，不强杀已经进入中的外部进程或 HTTP 请求。
+
+```http
+POST /api/v1/tasks/{taskId}/retry
+Authorization: Bearer <api-key>
+```
+
+重试会基于原任务 payload 创建一个新的 queued 任务，返回新 `taskId` 和 `retryOf`，不复用旧任务的 artifact 或状态。
 
 ## 任务模型
 
@@ -564,14 +582,15 @@ services:
 8. [done] 实现 API Key + 飞书 OAuth 管理后台，形态参考 APS。
 9. [done] 实现成功、失败、worker 启动和 TTL 四类清理：任务结束整目录清理、worker 启动孤儿目录清理和 TTL 兜底清理已落地。
 10. [done] 增加 fake APS 或 mock APS 的 smoke test：已覆盖 API 提交、worker 执行、APS API Key、`202` 轮询、`fileUrl` 下载、Unity 检查、DummyDll compare 和报告 artifact 生成。
+11. [done] 实现 cancel/retry 接口：queued/running 任务可取消，任意已有任务可基于原 payload 重新提交。
 
 ## 当前实现状态
 
 已落地最小可运行骨架：
 
 - `app/main.py` 提供 FastAPI 服务、`/health`、`/discover` 和 `/`。
-- `app/db.py` 使用 SQLite 保存 task/version/pair/artifact，支持提交和查询任务。
-- `app/api/routes.py` 支持 `/api/v1/unity-checks`、`/api/v1/comparisons`、`/api/v1/batch-comparisons`、`/api/v1/tasks/{taskId}`。
+- `app/db.py` 使用 SQLite 保存 task/version/pair/artifact，支持提交、查询、取消和重试任务。
+- `app/api/routes.py` 支持 `/api/v1/unity-checks`、`/api/v1/comparisons`、`/api/v1/batch-comparisons`、`/api/v1/tasks/{taskId}`、`/api/v1/tasks/{taskId}/cancel`、`/api/v1/tasks/{taskId}/retry`。
 - `app/auth/` 和 `app/admin/` 支持飞书 OAuth 单管理员登录、服务端 session、auth.sqlite API Key hash 存储，以及 API Key 创建/吊销。
 - `app/worker/loop.py` 可启动时清理非 running 的孤儿工作目录，按 `TASK_CONCURRENCY` 并发运行 queued task，并执行 TTL 兜底清理。
 - `app/worker/executor.py` 可执行 APS 下载、Unity 包判断、pair 成败汇总、按 `DOWNLOAD_CONCURRENCY`、`DUMP_CONCURRENCY`、`COMPARE_CONCURRENCY` 分段并发和任务结束清理。
@@ -585,10 +604,6 @@ services:
 - `lib/product/DllAnalyzer/` 已从主监控项目重新发布为单文件二进制：Linux `linux-x64`、macOS `osx-arm64`。Docker 默认使用 Linux 版本。
 - `PROJECT_MAP.md` 记录当前代码入口和模块边界。
 
-刻意暂缓：
-
-- cancel/retry 接口；当前 retry 通过重新提交任务解决。
-
 当前降级策略：
 
 - 未配置 `IL2CPP_DUMPER_PATH` 且仓库未放置 `lib/product/Il2CppDumper/{linux|osx}/Il2CppDumper` 时，worker 只做基础 Unity 结构检查并继续流转，避免开发环境没有大二进制时无法跑通。
@@ -598,4 +613,3 @@ services:
 
 - 报告存储和 auth 代码是从 APS 复制小模块，还是抽成共享内部包。第一版建议复制，减少跨仓库耦合。
 - 旧 `UnityAppVersionMonitor` 是直接同步调用新对比服务，还是先保留本地路径，等新服务稳定后切换。
-- 第一版是否需要 cancel/retry 接口。默认先不做 cancel；retry 可以通过重新提交任务解决。

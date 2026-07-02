@@ -119,19 +119,46 @@ class TaskStore:
 
     def claim_tasks(self, limit: int) -> list[str]:
         with self.connect() as conn:
+            now = utc_now()
             rows = conn.execute(
-                "SELECT id FROM tasks WHERE status = ? ORDER BY created_at LIMIT ?",
-                (TaskStatus.QUEUED, limit),
+                """
+                UPDATE tasks
+                SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ?
+                WHERE id IN (
+                  SELECT id FROM tasks WHERE status = ? ORDER BY created_at LIMIT ?
+                )
+                RETURNING id
+                """,
+                (TaskStatus.RUNNING, now, now, TaskStatus.QUEUED, limit),
             ).fetchall()
-            ids = [row["id"] for row in rows]
-            if ids:
-                placeholders = ",".join("?" for _ in ids)
+            return [row["id"] for row in rows]
+
+    def cancel_task(self, task_id: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                return None
+            if row["status"] in {TaskStatus.SUCCEEDED, TaskStatus.PARTIAL_FAILED, TaskStatus.FAILED}:
+                return row["status"]
+            if row["status"] != TaskStatus.CANCELLED:
                 now = utc_now()
                 conn.execute(
-                    f"UPDATE tasks SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ? WHERE id IN ({placeholders})",
-                    (TaskStatus.RUNNING, now, now, *ids),
+                    "UPDATE tasks SET status = ?, error = ?, updated_at = ?, finished_at = ? WHERE id = ?",
+                    (TaskStatus.CANCELLED, "cancelled by user", now, now, task_id),
                 )
-            return ids
+            return TaskStatus.CANCELLED
+
+    def retry_task(self, task_id: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT type, payload FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload"])
+        if row["type"] == TaskType.UNITY_CHECK:
+            return self.create_unity_check(UnityCheckRequest.model_validate(payload))
+        if row["type"] == TaskType.PAIR_COMPARE:
+            return self.create_pair_compare(PairCompareRequest.model_validate(payload))
+        return self.create_batch_compare(BatchCompareRequest.model_validate(payload))
 
     def running_task_ids(self) -> set[str]:
         with self.connect() as conn:

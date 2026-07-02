@@ -48,7 +48,10 @@ android-unity-compare-service/
 - `POST /api/v1/comparisons`
 - `POST /api/v1/batch-comparisons`
 - `GET /api/v1/tasks/{taskId}`
+- `POST /api/v1/tasks/{taskId}/cancel`
+- `POST /api/v1/tasks/{taskId}/retry`
 - SQLite 保存 `task`、`version`、`pair`、`artifact`
+- task 支持 cancel/retry；retry 基于原 payload 创建新任务，running cancel 为阶段边界协作取消
 - worker 可启动清理非 running 的孤儿工作目录，按 `TASK_CONCURRENCY` 并发运行 queued task，调用 APS 下载包，判断 Unity 可 dump，并在配置 Il2CppDumper 时执行真实 dump
 - 批量相邻对比复用版本 dump 结果，并按 `DOWNLOAD_CONCURRENCY`、`DUMP_CONCURRENCY`、`COMPARE_CONCURRENCY` 分段并发
 - 仓库内置 `lib/product/Il2CppDumper`，Docker 默认使用 Linux 版本
@@ -61,10 +64,6 @@ android-unity-compare-service/
 - `.env.example` 提供本地和部署配置模板，不包含真实 APS 地址或密钥
 - Docker 镜像安装 .NET 8 和 .NET 9 runtime（非 SDK）以及 `libicu76`；Compose 固定 `linux/amd64`
 - `AUTH_ENABLED=true` 时支持飞书 OAuth 单管理员后台，API Key 创建/吊销；静态 `API_KEYS` 仍保留兼容
-
-## 暂缓能力
-
-- cancel/retry 接口
 
 ## 本地运行
 

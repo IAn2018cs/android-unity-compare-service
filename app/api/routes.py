@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from app.auth.deps import require_api_key
 from app.config import Settings, get_settings
 from app.db import TaskStore
-from app.models import BatchCompareRequest, PairCompareRequest, UnityCheckRequest
+from app.models import BatchCompareRequest, PairCompareRequest, TaskStatus, UnityCheckRequest
 from app.storage import build_report_storage
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
@@ -38,6 +38,24 @@ async def get_task(task_id: str, settings: Settings = Depends(get_settings), sto
         return JSONResponse({"error": "NOT_FOUND", "message": "Task not found."}, status_code=404)
     add_signed_urls(task, settings)
     return JSONResponse(task)
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str, store: TaskStore = Depends(get_store)):
+    status = store.cancel_task(task_id)
+    if status is None:
+        return JSONResponse({"error": "NOT_FOUND", "message": "Task not found."}, status_code=404)
+    if status != TaskStatus.CANCELLED:
+        return JSONResponse({"error": "TASK_FINISHED", "message": "Finished tasks cannot be cancelled."}, status_code=409)
+    return {"taskId": task_id, "status": status}
+
+
+@router.post("/tasks/{task_id}/retry", status_code=202)
+async def retry_task(task_id: str, store: TaskStore = Depends(get_store)):
+    new_task_id = store.retry_task(task_id)
+    if new_task_id is None:
+        return JSONResponse({"error": "NOT_FOUND", "message": "Task not found."}, status_code=404)
+    return {"taskId": new_task_id, "status": "queued", "retryOf": task_id}
 
 
 def add_signed_urls(task: dict, settings: Settings) -> None:
@@ -74,6 +92,8 @@ async def discover(request: Request, settings: Settings = Depends(get_settings))
                 "/api/v1/comparisons",
                 "/api/v1/batch-comparisons",
                 "/api/v1/tasks/{taskId}",
+                "/api/v1/tasks/{taskId}/cancel",
+                "/api/v1/tasks/{taskId}/retry",
             ],
             "session_endpoints": ["/admin"],
         },
@@ -91,6 +111,8 @@ async def discover(request: Request, settings: Settings = Depends(get_settings))
                 "single_compare": {"method": "POST", "path": "/api/v1/comparisons", "auth": "api_key"},
                 "batch_compare": {"method": "POST", "path": "/api/v1/batch-comparisons", "auth": "api_key"},
                 "get_task": {"method": "GET", "path": "/api/v1/tasks/{taskId}", "auth": "api_key"},
+                "cancel_task": {"method": "POST", "path": "/api/v1/tasks/{taskId}/cancel", "auth": "api_key"},
+                "retry_task": {"method": "POST", "path": "/api/v1/tasks/{taskId}/retry", "auth": "api_key"},
             },
             "system": {
                 "health": {"method": "GET", "path": "/health", "auth": "public"},

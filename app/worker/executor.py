@@ -24,9 +24,15 @@ class TaskExecutor:
         task = self.store.get_task(task_id)
         if task is None:
             return
+        if self._is_cancelled(task_id):
+            self._cleanup(task_id, failed=True)
+            return
 
         try:
             await self._process_versions(task)
+            if self._is_cancelled(task_id):
+                self._cleanup(task_id, failed=True)
+                return
 
             task = self.store.get_task(task_id)
             versions = {version["id"]: version for version in task["versions"]}
@@ -34,11 +40,17 @@ class TaskExecutor:
                 self._finish_unity_check(task_id, task["versions"])
             else:
                 await self._finish_pairs(task_id, task["comparisons"], versions)
+            if self._is_cancelled(task_id):
+                self._cleanup(task_id, failed=True)
+                return
 
             status = self._task_status(self.store.get_task(task_id))
             self.store.mark_task(task_id, status)
             self._cleanup(task_id, failed=status != TaskStatus.SUCCEEDED)
         except Exception as exc:
+            if self._is_cancelled(task_id):
+                self._cleanup(task_id, failed=True)
+                return
             self.store.mark_task(task_id, TaskStatus.FAILED, str(exc))
             self._cleanup(task_id, failed=True)
             raise
@@ -110,6 +122,8 @@ class TaskExecutor:
         await asyncio.gather(*(run_pair(pair) for pair in pairs))
 
     def _finish_pair(self, task_id: str, pair: dict, versions: dict[str, dict]) -> None:
+        if self._is_cancelled(task_id):
+            return
         old = versions[pair["oldVersionId"]]
         new = versions[pair["newVersionId"]]
         if old["status"] != VersionStatus.UNITY_DUMPABLE or new["status"] != VersionStatus.UNITY_DUMPABLE:
@@ -131,6 +145,8 @@ class TaskExecutor:
                 dll_analyzer_path=self.settings.dll_analyzer_path,
                 timeout_seconds=self.settings.dll_analyzer_timeout_seconds,
             )
+            if self._is_cancelled(task_id):
+                return
             self.store.mark_pair(pair["pairId"], PairStatus.UPLOADING)
             for source, content_type in ((artifacts.json_path, "application/json"), (artifacts.html_path, "text/html")):
                 object_key = self._persist_artifact(package_name, task_id, pair["pairId"], source, content_type)
@@ -164,3 +180,7 @@ class TaskExecutor:
             import shutil
 
             shutil.rmtree(task_dir, ignore_errors=True)
+
+    def _is_cancelled(self, task_id: str) -> bool:
+        task = self.store.get_task(task_id)
+        return bool(task and task["status"] == TaskStatus.CANCELLED)

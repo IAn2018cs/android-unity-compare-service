@@ -76,6 +76,28 @@ def test_create_and_get_batch_task(tmp_path):
     assert task["comparisons"][1]["newVersion"] == "1.0.2"
 
 
+def test_cancel_queued_task_and_retry(tmp_path):
+    c = client(tmp_path)
+    task_id = c.post(
+        "/api/v1/comparisons",
+        json={
+            "packageName": "com.example.game",
+            "oldVersion": {"versionCode": "100"},
+            "newVersion": {"versionCode": "101"},
+        },
+    ).json()["taskId"]
+
+    cancelled = c.post(f"/api/v1/tasks/{task_id}/cancel")
+    retried = c.post(f"/api/v1/tasks/{task_id}/retry")
+
+    assert cancelled.status_code == 200
+    assert cancelled.json() == {"taskId": task_id, "status": "cancelled"}
+    assert c.get(f"/api/v1/tasks/{task_id}").json()["status"] == "cancelled"
+    assert retried.status_code == 202
+    assert retried.json()["retryOf"] == task_id
+    assert c.get(f"/api/v1/tasks/{retried.json()['taskId']}").json()["status"] == "queued"
+
+
 def test_api_key_gate(tmp_path):
     c = client(tmp_path)
     settings = get_settings()
@@ -161,6 +183,35 @@ def test_worker_executor_marks_task_done(tmp_path, monkeypatch):
     assert task["status"] == "succeeded"
     assert task["progress"]["versionsDumped"] == 2
     assert task["progress"]["comparisonsCompleted"] == 1
+
+
+def test_worker_stops_after_running_task_is_cancelled(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    task_id = c.post(
+        "/api/v1/comparisons",
+        json={
+            "packageName": "com.example.game",
+            "oldVersion": {"versionCode": "100"},
+            "newVersion": {"versionCode": "101"},
+        },
+    ).json()["taskId"]
+    settings = get_settings()
+    store = TaskStore(settings.task_db_path)
+    assert store.claim_tasks(1) == [task_id]
+    executor = TaskExecutor(settings, store, FakeApsClient(unity=True))
+
+    async def cancel_after_versions(task):
+        store.cancel_task(task["taskId"])
+
+    async def fail_if_pairs_run(*args):
+        raise AssertionError("cancelled task should not compare pairs")
+
+    monkeypatch.setattr(executor, "_process_versions", cancel_after_versions)
+    monkeypatch.setattr(executor, "_finish_pairs", fail_if_pairs_run)
+
+    executor.run(task_id)
+
+    assert c.get(f"/api/v1/tasks/{task_id}").json()["status"] == "cancelled"
 
 
 def test_task_query_adds_report_signed_urls(tmp_path, monkeypatch):
