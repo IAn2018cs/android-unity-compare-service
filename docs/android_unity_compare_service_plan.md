@@ -48,7 +48,7 @@ Compare VM
   报告对象存储
 ```
 
-公网只需要暴露 `compare-api`。APS 优先通过 VPC/private IP 访问；如果必须公网访问，APS API Key 必须开启。
+公网只需要暴露 `compare-api`。APS 优先通过 VPC/private IP 访问；如果必须公网访问，APS API Key 必须开启。生产 APS 地址只通过 `APS_BASE_URL` 环境变量注入，不写入仓库默认值。
 
 ## 技术选型
 
@@ -162,11 +162,13 @@ SESSION_TTL_HOURS=24
 
 ## 环境变量
 
+仓库提供 `.env.example` 作为本地和部署配置模板；生产 APS 地址和密钥只填到实际 `.env` 或部署平台环境变量，不写入仓库。
+
 ```env
 PORT=8080
 PUBLIC_BASE_URL=https://compare.example.com
 
-APS_BASE_URL=http://aps-private-ip:11010
+APS_BASE_URL=...
 APS_API_KEY=...
 APS_DOWNLOAD_TIMEOUT_SECONDS=21600
 APS_JOB_POLL_SECONDS=10
@@ -573,7 +575,7 @@ services:
 - `app/auth/` 和 `app/admin/` 支持飞书 OAuth 单管理员登录、服务端 session、auth.sqlite API Key hash 存储，以及 API Key 创建/吊销。
 - `app/worker/loop.py` 可启动时清理非 running 的孤儿工作目录，按 `TASK_CONCURRENCY` 并发运行 queued task，并执行 TTL 兜底清理。
 - `app/worker/executor.py` 可执行 APS 下载、Unity 包判断、pair 成败汇总、按 `DOWNLOAD_CONCURRENCY`、`DUMP_CONCURRENCY`、`COMPARE_CONCURRENCY` 分段并发和任务结束清理。
-- `app/aps/client.py` 已具备下载接口、APS `202` 轮询和重定向跟随能力，并已接入执行器。
+- `app/aps/client.py` 已具备下载接口、APS `202` 轮询和重定向跟随能力；`APS_BASE_URL` 和 `APS_API_KEY` 只通过环境变量注入。
 - `app/storage.py` 支持报告 local/GCS/S3 上传；查询任务时对 GCS/S3 artifact 实时生成 signed URL。
 - `app/unity/dumper.py` 支持扫描 APK/XAPK 内嵌 APK、提取 `libil2cpp.so`/`global-metadata.dat`，并在 `IL2CPP_DUMPER_PATH` 或仓库 `lib/product` 可用时运行 Il2CppDumper。
 - `app/unity/compare.py` 迁移主监控项目 DummyDll 对比逻辑，调用 `DllAnalyzer <dll> <output_json>` 分析 DLL，并按原项目字段结构生成 compare report。

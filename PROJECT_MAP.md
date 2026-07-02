@@ -33,6 +33,7 @@ android-unity-compare-service/
   tests/test_service.py  # API、鉴权、worker 和报告内容契约 smoke tests
   lib/product/Il2CppDumper/
   lib/product/DllAnalyzer/
+  .env.example           # 环境变量模板，不包含真实 APS 地址或密钥
   docker-compose.yml     # compare-api + compare-worker
   Dockerfile
   pyproject.toml
@@ -55,6 +56,8 @@ android-unity-compare-service/
 - DummyDll compare 已迁入，产出 `report.json` 和 `report.html`，JSON 内容结构兼容主监控项目
 - 配置 `OPENAI_API_KEY` 后，HTML 报告会调用 OpenAI-compatible API 生成 AI 智能分析；JSON 报告内容不写入 AI 结果
 - `REPORT_STORAGE_BACKEND=local|gcs|s3` 支持报告上传；GCS/S3 查询任务时返回短期 signed URL
+- 生产 APS 地址和 API Key 只通过 `APS_BASE_URL` / `APS_API_KEY` 环境变量注入
+- `.env.example` 提供本地和部署配置模板，不包含真实 APS 地址或密钥
 - Docker 镜像安装 .NET 8 和 .NET 9 runtime（非 SDK）以及 `libicu76`；Compose 固定 `linux/amd64`
 - `AUTH_ENABLED=true` 时支持飞书 OAuth 单管理员后台，API Key 创建/吊销；静态 `API_KEYS` 仍保留兼容
 
