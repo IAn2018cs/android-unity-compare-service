@@ -155,7 +155,7 @@ curl -H 'Authorization: Bearer <key>' https://<域名>/api/v1/tasks/<taskId>
 
 - **内存**：Il2CppDumper 对大包（il2cpp 二进制 + metadata 数百 MB）dump 时吃内存。默认 `TASK_CONCURRENCY=2`、`DUMP_CONCURRENCY=2`，8 GB 起步可用；若 worker 日志出现 OOM/被杀，优先把 `DUMP_CONCURRENCY` 降到 1，仍不够再升 `m6i.xlarge`（4 vCPU / 16 GB）。
 - **磁盘**：每个任务的工作目录峰值 ≈ 参与版本数 × 包大小 ×（解压/提取放大 2~3 倍）；批量对比多版本叠加并发任务，100 GB 是合理起点。`WORK_DIR_TTL_HOURS=24` 会自动清理过期工作目录，报告本体在 S3 不占本地盘。磁盘吃紧时 **EC2 → 卷 → Modify volume** 在线扩容（扩后实例里 `sudo growpart /dev/nvme0n1 1 && sudo xfs_growfs /`）。
-- **CPU**：dump/compare 是 CPU 密集，核数决定吞吐不决定成败；任务排队变慢再升配。
+- **CPU**：dump/compare 是 CPU 密集。实测 `m6i.large`（2 vCPU）并发跑 2 个对比任务时会把 Caddy/API 也饿到间歇无响应（任务不受影响，但期间查询/新提交会失败）——2 vCPU 上建议 `TASK_CONCURRENCY=1`，要保持 2 就升 4 vCPU 机型。
 - **成本参考**（us-west-2 按需价）：`m6i.large` ≈ $70/月 + EBS gp3 100GB ≈ $8/月 + EIP ≈ $3.6/月 + S3/流量少量 ≈ **$85/月**。长期跑可上 1 年期 Savings Plan 省约三成；机器升降配只需 stop → change instance type → start（EIP/数据都保持）。
 
 ## 日常运维
@@ -175,6 +175,16 @@ sudo docker image prune -f    # 固定机反复 --build 会积累悬空旧镜像
 ```
 
 如果确实在有任务运行时重启了：worker 启动会把中断的任务自动标记为 `failed`（error 注明因重启中断），对这些任务调 `POST /api/v1/tasks/{taskId}/retry` 重新提交即可（retry 按原 payload 建新任务）。
+
+### 升降配机型
+
+stop → 换机型 → start，全程 EIP 保持关联（白名单/DNS 不用动）、EBS 数据保留、容器开机自动拉起（user-data 不会重复执行），停机窗口约 3–5 分钟：
+
+1. 按上面的命令确认没有 running 任务（停机会中断任务）。
+2. **EC2 → Instances → 选中实例 → Instance state → Stop instance**（是 Stop，不是 Terminate），等状态变 `Stopped`。
+3. **Actions → Instance settings → Change instance type** → 选目标机型 → Apply。仍**必须是 x86_64 机型**（如 `m6i.xlarge` 4 vCPU/16 GB ≈ $140/月、`c6i.xlarge` 4 vCPU/8 GB ≈ $124/月），不能选 m7g/m6g 等 Graviton。
+4. **Instance state → Start instance**，约 2 分钟后验证：实例上 `curl -s https://checkip.amazonaws.com` 仍为原 EIP、`https://<域名>/health` 返回 ok。
+5. 若升配前临时调低过并发（如 `TASK_CONCURRENCY=1`），记得改回 SSM 参数并按上面流程重拉 env + `up -d`。
 
 改了 `.env.cloud`（SSM 参数）后同样流程：先更新 SSM 参数，再在实例上重拉 + 重启：
 
