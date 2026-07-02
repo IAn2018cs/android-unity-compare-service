@@ -14,7 +14,7 @@
 - 校验指定版本是否是可 dump 的 Unity 包。
 - 提交单个对比任务：包名 + 两个版本。
 - 提交多版本批量对比任务：包名 + 版本列表，相邻版本递增对比。
-- 通过环境变量控制任务和对比并发数量；下载、dump 并发保留配置入口，后续再接入执行器。
+- 通过环境变量控制顶层任务和 pair 对比并发数量；下载、dump 并发保留配置入口，后续再接入执行器。
 - 查询任务状态、批量对比进度、失败原因和报告下载地址。
 - 通过 Docker Compose 部署到云 VM。
 
@@ -117,7 +117,7 @@ android-unity-compare-service/
     auth/routes.py       # 飞书 OAuth 登录/回调/退出
     admin/routes.py      # 管理后台和 API Key 创建/吊销
     aps/client.py        # APS 下载 client，已接入 worker
-    worker/loop.py       # worker 主循环，启动时清理孤儿工作目录
+    worker/loop.py       # worker 主循环，按 TASK_CONCURRENCY 并发运行任务，启动时清理孤儿工作目录
     worker/executor.py   # 下载包、判断 Unity 可 dump、按 COMPARE_CONCURRENCY 并发处理 pair
     worker/cleanup.py    # WORK_DIR 孤儿目录和 TTL 清理
     unity/dumper.py      # Unity 包判断、Il2CppDumper 输入提取和真实 dump 入口
@@ -439,7 +439,7 @@ SQLite 至少保存四类记录：
 
 使用环境变量控制并发：
 
-- `TASK_CONCURRENCY`：同时运行的顶层任务数。
+- `TASK_CONCURRENCY`：worker 同时运行的顶层任务数。
 - `DOWNLOAD_CONCURRENCY`：预留配置；当前版本下载阶段按任务内版本顺序执行。
 - `DUMP_CONCURRENCY`：预留配置；当前版本 dump 阶段按任务内版本顺序执行。
 - `COMPARE_CONCURRENCY`：同时执行 pair 对比的数量。
@@ -484,6 +484,7 @@ WORK_DIR/{task_id}/
 
 - 当前实现以任务结束整目录清理为主：任务结束时删除整个 `WORK_DIR/{task_id}`，包括包、dump 结果、报告和临时文件。
 - worker 启动时扫描 `WORK_DIR`，删除没有对应 running task 的任务目录。
+- TTL 清理会跳过当前 worker 进程正在运行的任务目录，避免长任务被误删。
 - 失败任务默认也清理本地目录；只有 `KEEP_FAILED_WORK_DIR=true` 时保留现场。
 - 增加兜底 TTL 清理，默认 `WORK_DIR_TTL_HOURS=24`。
 
@@ -570,7 +571,7 @@ services:
 - `app/db.py` 使用 SQLite 保存 task/version/pair/artifact，支持提交和查询任务。
 - `app/api/routes.py` 支持 `/api/v1/unity-checks`、`/api/v1/comparisons`、`/api/v1/batch-comparisons`、`/api/v1/tasks/{taskId}`。
 - `app/auth/` 和 `app/admin/` 支持飞书 OAuth 单管理员登录、服务端 session、auth.sqlite API Key hash 存储，以及 API Key 创建/吊销。
-- `app/worker/loop.py` 可启动时清理非 running 的孤儿工作目录，领取 queued task，并执行 TTL 兜底清理。
+- `app/worker/loop.py` 可启动时清理非 running 的孤儿工作目录，按 `TASK_CONCURRENCY` 并发运行 queued task，并执行 TTL 兜底清理。
 - `app/worker/executor.py` 可执行 APS 下载、Unity 包判断、pair 成败汇总、按 `COMPARE_CONCURRENCY` 并发执行 pair 对比和任务结束清理。
 - `app/aps/client.py` 已具备下载接口、APS `202` 轮询和重定向跟随能力，并已接入执行器。
 - `app/storage.py` 支持报告 local/GCS/S3 上传；查询任务时对 GCS/S3 artifact 实时生成 signed URL。

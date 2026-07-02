@@ -3,13 +3,14 @@ import time
 from pathlib import Path
 
 
-def remove_expired_work_dirs(work_dir: Path, ttl_hours: float) -> int:
+def remove_expired_work_dirs(work_dir: Path, ttl_hours: float, protected_names: set[str] | None = None) -> int:
     if not work_dir.exists():
         return 0
+    protected_names = protected_names or set()
     cutoff = time.time() - ttl_hours * 3600
     removed = 0
     for child in work_dir.iterdir():
-        if child.is_dir() and child.stat().st_mtime < cutoff:
+        if child.is_dir() and child.name not in protected_names and child.stat().st_mtime < cutoff:
             shutil.rmtree(child, ignore_errors=True)
             removed += 1
     return removed

@@ -8,11 +8,11 @@ from app.aps.client import ApsClient
 from app.config import get_settings
 from app.db import TaskStore
 from app.main import app
-from app.models import PairCompareRequest
+from app.models import PairCompareRequest, TaskStatus
 from app.auth.service import AuthService
 from app.unity.compare import compare_dummy_dirs
 from app.unity.dumper import extract_unity_inputs, looks_like_unity_package
-from app.worker.cleanup import remove_orphan_work_dirs
+from app.worker.cleanup import remove_expired_work_dirs, remove_orphan_work_dirs
 from app.worker.executor import TaskExecutor
 
 
@@ -267,6 +267,68 @@ def test_startup_cleanup_removes_non_running_work_dirs(tmp_path):
 
     assert running_dir.exists()
     assert not orphan_dir.exists()
+
+
+def test_ttl_cleanup_keeps_running_work_dirs(tmp_path):
+    work_dir = tmp_path / "work"
+    running_dir = work_dir / "running"
+    expired_dir = work_dir / "expired"
+    running_dir.mkdir(parents=True)
+    expired_dir.mkdir()
+    old = time.time() - 7200
+    import os
+
+    os.utime(running_dir, (old, old))
+    os.utime(expired_dir, (old, old))
+
+    assert remove_expired_work_dirs(work_dir, 1, protected_names={"running"}) == 1
+    assert running_dir.exists()
+    assert not expired_dir.exists()
+
+
+def test_worker_loop_runs_tasks_concurrently(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    task_ids = [
+        c.post(
+            "/api/v1/unity-checks",
+            json={"packageName": "com.example.game", "versionCode": str(index)},
+        ).json()["taskId"]
+        for index in range(2)
+    ]
+    settings = get_settings()
+    settings.task_concurrency = 2
+    settings.worker_poll_seconds = 0.01
+    real_sleep = time.sleep
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+    done = 0
+
+    def fake_run_task(settings, store, task_id):
+        nonlocal active, max_active, done
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        real_sleep(0.05)
+        store.mark_task(task_id, TaskStatus.SUCCEEDED)
+        with lock:
+            active -= 1
+            done += 1
+
+    def stop_after_done(seconds):
+        if done >= len(task_ids):
+            raise RuntimeError("stop loop")
+        real_sleep(seconds)
+
+    monkeypatch.setattr("app.worker.loop.run_task", fake_run_task)
+    monkeypatch.setattr("app.worker.loop.time.sleep", stop_after_done)
+
+    with pytest.raises(RuntimeError, match="stop loop"):
+        import app.worker.loop
+
+        app.worker.loop.run_forever()
+
+    assert max_active == 2
 
 
 def test_aps_client_downloads_202_file_url(tmp_path):
