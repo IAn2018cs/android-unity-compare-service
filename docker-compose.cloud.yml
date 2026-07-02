@@ -19,6 +19,9 @@ x-cloud-env: &cloud_env
   AUTH_ENABLED: ${AUTH_ENABLED:-true}
   # 报告默认走 S3（本地盘只作工作目录）。
   REPORT_STORAGE_BACKEND: ${REPORT_STORAGE_BACKEND:-s3}
+  # 应用在 Caddy 后面收到的是 HTTP，信任代理的 X-Forwarded-Proto 头才能对外拼出 https 链接
+  # （首页/discover 的 base_url）。8080 不对公网开放，伪造头风险可控。
+  FORWARDED_ALLOW_IPS: "*"
 
 # 固定机长期运行，json-file 日志默认无上限会慢慢吃满 EBS——所有服务统一轮转上限。
 x-cloud-logging: &cloud_logging
