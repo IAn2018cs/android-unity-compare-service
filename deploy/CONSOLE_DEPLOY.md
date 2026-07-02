@@ -171,6 +171,7 @@ sudo docker compose exec compare-api python -c \
 # 输出 set() 表示空闲，再执行：
 sudo git pull
 sudo docker compose -f docker-compose.yml -f docker-compose.cloud.yml --env-file .env.cloud up -d --build
+sudo docker image prune -f    # 固定机反复 --build 会积累悬空旧镜像，顺手清掉
 ```
 
 如果确实在有任务运行时重启了：worker 启动会把中断的任务自动标记为 `failed`（error 注明因重启中断），对这些任务调 `POST /api/v1/tasks/{taskId}/retry` 重新提交即可（retry 按原 payload 建新任务）。
