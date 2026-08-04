@@ -34,6 +34,7 @@ android-unity-compare-service/
   lib/product/Il2CppDumper/
   lib/product/DllAnalyzer/
   deploy/CONSOLE_DEPLOY.md  # AWS 控制台部署步骤（固定 On-Demand 实例 + EIP + S3）
+  deploy/EC2_STOP_START.md   # 低请求量时停机保留、费用边界和快速启动手册
   deploy/Caddyfile          # 云上 HTTPS 终止与反代（Let's Encrypt 自动证书）
   deploy/litestream.yml.tmpl  # tasks/auth SQLite → S3 灾备配置模板
   .env.example           # 环境变量模板，不包含真实 APS 地址或密钥
@@ -72,7 +73,7 @@ android-unity-compare-service/
 - Docker 镜像安装 .NET 8 和 .NET 9 runtime（非 SDK）以及 `libicu76`；Compose 固定 `linux/amd64`
 - `AUTH_ENABLED=true` 时支持飞书 OAuth 单管理员后台，API Key 创建/吊销；静态 `API_KEYS` 仍保留兼容
 - worker 启动时把上次中断的 running 任务标记为 failed（可 retry），再清理孤儿工作目录，配合云上更新部署
-- 云上部署形态：AWS 固定 On-Demand EC2 + EIP（出入站固定 IP，满足 `OPENAI_BASE_URL` 来源 IP 白名单）+ Caddy 自动 HTTPS + S3（报告 + Litestream 灾备），步骤见 `deploy/CONSOLE_DEPLOY.md`
+- 云上部署形态：AWS 固定 On-Demand EC2 + EIP（出入站固定 IP，满足 `OPENAI_BASE_URL` 来源 IP 白名单）+ Caddy 自动 HTTPS + S3（报告 + Litestream 灾备），部署步骤见 `deploy/CONSOLE_DEPLOY.md`，闲置停机与快速启动见 `deploy/EC2_STOP_START.md`
 
 ## 本地运行
 

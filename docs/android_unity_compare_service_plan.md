@@ -56,6 +56,7 @@ Compare VM
 
 - 叠加配置：`docker-compose.cloud.yml`，环境变量模板 `.env.cloud.example`。
 - 控制台部署步骤、容量与机型、更新部署、灾备与故障排查见 `deploy/CONSOLE_DEPLOY.md`。
+- 低请求量阶段允许 Stop 原 EC2 实例以暂停计算费，同时保留 EBS、EIP、S3、SSM、DNS 和 IAM 配置；安全停机与快速启动步骤见 `deploy/EC2_STOP_START.md`。
 - 更新部署会重启 worker：先确认没有 running 任务再升级；确实中断的任务由 worker 启动时标记为 `failed`，用 retry 重新提交。
 
 ## 技术选型

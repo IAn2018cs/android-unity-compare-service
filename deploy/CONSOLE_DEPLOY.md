@@ -160,6 +160,8 @@ curl -H 'Authorization: Bearer <key>' https://<域名>/api/v1/tasks/<taskId>
 
 ## 日常运维
 
+请求量较少时，可以停止 EC2 计算资源并保留 EBS、EIP、S3、DNS 和部署配置；恢复需求时直接启动原实例。完整的安全停机、计费说明和启动验证步骤见 [`EC2_STOP_START.md`](EC2_STOP_START.md)。
+
 ### 更新部署
 
 对比任务一旦中断就要整体重跑，**先确认没有 running 任务再更新**：
